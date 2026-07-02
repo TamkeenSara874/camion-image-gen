@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 _configure_logging()
 
 app = FastAPI(
-    title="Camion Image Generator",
+    title="Campaign Image Generator",
     version="1.0.0",
     lifespan=lifespan,
 )

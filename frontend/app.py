@@ -6,6 +6,9 @@ import time
 
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
@@ -24,7 +27,7 @@ CAMPAIGN_TYPE_CAPTIONS = {
     "Deals": "Promote a discount, BOGO, or offer",
 }
 
-AUDIENCE_OPTIONS = ["All Guests", "Regulars", "New", "Potential", "VIP", "Lapsed"]
+AUDIENCE_OPTIONS = ["All Guests", "Regulars", "New", "Potential", "VIP", "Lost"]
 
 TAG_OPTIONS = [
     "Cocktail", "Wine", "Beer", "Mexican Food Lovers", "Seafood Lovers",
@@ -323,7 +326,8 @@ def _result_panel(data: dict) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Camion Image Generator",
+        page_title="Campaign Image Generator",
+        page_icon="icon.png",  # swap for any emoji string or image path
         layout="wide",
         initial_sidebar_state="collapsed",
     )
