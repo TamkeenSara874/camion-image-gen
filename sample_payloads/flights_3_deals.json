@@ -1,0 +1,25 @@
+{
+  "campaign_type": "Deals",
+  "campaign_goals": "Increase Item Sales",
+  "campaign_audiences": ["Regulars", "Potential"],
+  "campaign_guest_tags": ["Wine", "Cocktail"],
+  "campaign_vars": {
+    "name": "Happy Hour Savings",
+    "description": "Enjoy 25% off all cocktails and wines during happy hour, Monday through Friday.",
+    "deal_type": "$ or %OFF",
+    "deal_type_vars": {
+      "discount_type": "percent",
+      "discount_value": 25,
+      "items": "cocktails and wines"
+    },
+    "start_date": null,
+    "end_date": null,
+    "promo_code": null
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Sophisticated, Warm, Exclusive",
+  "restaurantId": 4,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}

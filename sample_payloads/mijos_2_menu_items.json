@@ -1,0 +1,19 @@
+{
+  "campaign_type": "Menu Items",
+  "campaign_goals": "Increase Item Sales",
+  "campaign_audiences": ["Potential", "New"],
+  "campaign_guest_tags": ["Seafood Lovers"],
+  "campaign_vars": {
+    "name": "Baja Fish Taco",
+    "description": "Crispy beer-battered fish, fresh pico, avocado crema on a warm corn tortilla.",
+    "price": "12",
+    "item_category": ["Tacos"],
+    "item_menu": "Main Menu"
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Vibrant, Casual, Friendly",
+  "restaurantId": 2,
+  "orientation": "Square",
+  "custom_prompt": null
+}

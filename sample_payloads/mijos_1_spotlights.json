@@ -1,0 +1,17 @@
+{
+  "campaign_type": "Spotlights",
+  "campaign_goals": "Increase Restaurant Visits",
+  "campaign_audiences": ["Regulars", "New"],
+  "campaign_guest_tags": ["Cocktail", "Mexican Food Lovers"],
+  "campaign_vars": {
+    "name": "Weekend Fiesta",
+    "description": "Join us every weekend for live music, fresh margaritas, and our chef's special tacos.",
+    "spotlight_type": "event"
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Vibrant, Festive, Welcoming",
+  "restaurantId": 2,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}

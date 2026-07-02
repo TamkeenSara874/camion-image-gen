@@ -1,0 +1,19 @@
+{
+  "campaign_type": "Menu Items",
+  "campaign_goals": "Increase Item Sales",
+  "campaign_audiences": ["Potential", "New"],
+  "campaign_guest_tags": ["Cocktail", "Wine"],
+  "campaign_vars": {
+    "name": "Beer & Wine",
+    "item_category": ["Catering"],
+    "price": "30",
+    "description": "All beers, plus house red and white wines.",
+    "item_menu": ""
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Friendly, Casual, Inclusive",
+  "restaurantId": 4,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}

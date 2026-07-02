@@ -1,0 +1,17 @@
+{
+  "campaign_type": "Spotlights",
+  "campaign_goals": "Increase Restaurant Visits",
+  "campaign_audiences": ["Wine Enthusiasts", "Regulars"],
+  "campaign_guest_tags": ["Wine", "Fine Dining"],
+  "campaign_vars": {
+    "name": "Wine Wednesday",
+    "description": "Explore our rotating selection of 130 wines by the glass every Wednesday evening.",
+    "spotlight_type": "experience"
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Sophisticated, Elegant, Inviting",
+  "restaurantId": 4,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}

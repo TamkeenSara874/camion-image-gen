@@ -1,0 +1,25 @@
+{
+  "campaign_type": "Deals",
+  "campaign_goals": "Increase Item Sales",
+  "campaign_audiences": ["All Guests"],
+  "campaign_guest_tags": [],
+  "campaign_vars": {
+    "name": "Taco Tuesday BOGO",
+    "description": "Buy one Baja Fish Taco, get one free every Tuesday.",
+    "deal_type": "BOGO",
+    "deal_type_vars": {
+      "buy_quantity": 1,
+      "get_quantity": 1,
+      "item": "Baja Fish Taco"
+    },
+    "start_date": "2026-07-01",
+    "end_date": "2026-08-31",
+    "promo_code": null
+  },
+  "cta": false,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Exciting, Fun, Direct",
+  "restaurantId": 2,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}

@@ -1,0 +1,28 @@
+{
+  "2": {
+    "restaurant_name": "Mijo's Taqueria",
+    "cuisine_type": "Mexican",
+    "brand_theme": "vibrant, festive, warm and inviting taqueria atmosphere",
+    "visual_style": "rustic wood textures, terracotta tones, colorful folk art",
+    "website_url": "https://www.mijostaqueria.com",
+    "brand_colors": {
+      "primary": "#C8410A",
+      "accent": "#F5A623",
+      "text_on_primary": "#FFFFFF"
+    },
+    "currency_symbol": "$"
+  },
+  "4": {
+    "restaurant_name": "Flights Restaurant",
+    "cuisine_type": "American Eclectic",
+    "brand_theme": "sophisticated, contemporary, wine-forward dining experience",
+    "visual_style": "clean lines, deep jewel tones, elegant minimalist presentation",
+    "website_url": "https://www.flightsrestaurant.com",
+    "brand_colors": {
+      "primary": "#1A2744",
+      "accent": "#C9A96E",
+      "text_on_primary": "#FFFFFF"
+    },
+    "currency_symbol": "$"
+  }
+}
