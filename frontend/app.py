@@ -275,7 +275,28 @@ def _result_panel(data: dict) -> None:
         st.image(data["image_url"], use_container_width=True)
         if data.get("alt_text"):
             st.markdown(f'<p class="alt-text">{data["alt_text"]}</p>', unsafe_allow_html=True)
-        st.link_button("Open full image", data["image_url"])
+
+        dl_col, link_col = st.columns(2)
+        with link_col:
+            st.link_button("Open full image", data["image_url"], use_container_width=True)
+        with dl_col:
+            try:
+                img_bytes = requests.get(data["image_url"], timeout=30).content
+                safe_name = (
+                    data.get("restaurant_name", "campaign")
+                    .replace("'", "")
+                    .replace(" ", "_")
+                )
+                safe_type = data.get("campaign_type", "image").replace(" ", "_")
+                st.download_button(
+                    "Download image",
+                    data=img_bytes,
+                    file_name=f"{safe_name}_{safe_type}.jpg",
+                    mime="image/jpeg",
+                    use_container_width=True,
+                )
+            except Exception:
+                pass
 
     with col_meta:
         st.markdown("**Generation details**")

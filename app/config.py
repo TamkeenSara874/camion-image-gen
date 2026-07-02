@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     openai_image_model: str = "gpt-image-2"
     openai_image_fallback_model: str = "gpt-image-1.5"
     openai_image_fallback_model_2: str = "gpt-image-1-mini"
-    openai_qa_model: str = "gpt-4.1"
+    openai_qa_model: str = "gpt-4.1-mini"
     openai_image_quality: Literal["low", "medium", "high"] = "medium"
 
     hf_token: str = ""

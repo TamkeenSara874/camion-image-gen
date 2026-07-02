@@ -82,42 +82,65 @@ def _composite_menu_items(
     settings: Settings,
 ) -> tuple[bytes, bool]:
     """
-    Menu Items: clean food photography — small bottom strip only.
-    Restaurant name left, price right. No large text overlay.
-    Matches real Camion menu item email: food photo is the hero, text lives in the email body.
+    Menu Items: left panel (42% width, primary color) with restaurant name, item name large,
+    price in accent color. Food photo visible in right 58%.
     """
-    img = _apply_brand_tone(img, ctx.restaurant.brand_colors["primary"])
     w, h = img.size
+    panel_w = int(w * 0.42)
+    padding = int(w * 0.035)
+
+    img = img.convert("RGBA")
+    panel = Image.new(
+        "RGBA", (panel_w, h), _hex_to_rgba(ctx.restaurant.brand_colors["primary"], 235)
+    )
+    img.paste(panel, (0, 0), panel)
+    img = img.convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    strip_h = int(h * 0.08)
-    strip_y = h - strip_h
-    draw.rectangle(
-        [(0, strip_y), (w, h)], fill=_hex_to_rgba(ctx.restaurant.brand_colors["primary"], 210)
-    )
-
-    font_size = int(strip_h * 0.42)
-    padding = 14
     text_color = tuple(_hex_to_rgb(ctx.restaurant.brand_colors["text_on_primary"]))
+    accent_color = tuple(_hex_to_rgb(ctx.restaurant.brand_colors["accent"]))
+    max_text_w = panel_w - padding * 2
+    text_truncated = False
 
-    price = ctx.price or ""
-    price_font = _get_font(_FONT_BOLD, font_size)
-    price_w = draw.textlength(price, font=price_font) if price else 0
-
-    name_max_w = w - int(price_w) - padding * 3
-    name_text, name_font = _fit_text(
-        draw, ctx.restaurant.restaurant_name, _FONT_BOLD, font_size, name_max_w
+    # Restaurant name: small, top
+    rest_font_size = int(h * 0.033)
+    rest_text, rest_font = _fit_text(
+        draw, ctx.restaurant.restaurant_name, _FONT_BOLD, rest_font_size, max_text_w
     )
-    text_truncated = name_text.endswith("...")
+    draw.text((padding, int(h * 0.055)), rest_text, font=rest_font, fill=text_color)
 
-    _draw_text_center_y(draw, padding, strip_y, strip_h, name_text, name_font, text_color)
-    if price:
-        _draw_text_center_y(
-            draw, w - int(price_w) - padding, strip_y, strip_h, price, price_font, text_color
+    # Item name: large
+    name_font_size = int(h * 0.082)
+    name_text, name_font = _fit_text(draw, ctx.main_title, _FONT_BOLD, name_font_size, max_text_w)
+    if name_text.endswith("..."):
+        text_truncated = True
+    draw.text((padding, int(h * 0.22)), name_text, font=name_font, fill=text_color)
+
+    # Price: accent color, prominent, below item name
+    if ctx.price:
+        price_font_size = int(h * 0.095)
+        price_text, price_font = _fit_text(
+            draw, ctx.price, _FONT_BOLD, price_font_size, max_text_w
         )
+        draw.text((padding, int(h * 0.46)), price_text, font=price_font, fill=accent_color)
 
     if settings.cta_overlay_enabled and ctx.cta and ctx.cta_text:
-        img, _ = _add_cta_strip(draw, img, w, strip_y, ctx, settings)
+        draw = ImageDraw.Draw(img)
+        cta_h = int(h * 0.07)
+        cta_y = h - cta_h
+        draw.rectangle(
+            [(0, cta_y), (panel_w, h)],
+            fill=_hex_to_rgba(ctx.restaurant.brand_colors["accent"], 255),
+        )
+        cta_font_size = int(cta_h * 0.45)
+        cta_font = _get_font(_FONT_BOLD, cta_font_size)
+        cta_w = draw.textlength(ctx.cta_text, font=cta_font)
+        draw.text(
+            ((panel_w - cta_w) // 2, cta_y + (cta_h - cta_font_size) // 2),
+            ctx.cta_text,
+            font=cta_font,
+            fill=text_color,
+        )
 
     out = BytesIO()
     img.convert("RGB").save(out, format="JPEG", quality=_JPEG_QUALITY, optimize=True)

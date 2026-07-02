@@ -43,7 +43,7 @@ compositor failures (re-run Stage 6 only).
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/TamkeenSara874/camion-image-gen.git
 cd camion-image-gen
 pip install -r requirements.txt
 ```
