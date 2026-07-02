@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     cta_overlay_enabled: bool = False
     max_images_per_restaurant_per_day: int = 50
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 @lru_cache

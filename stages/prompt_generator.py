@@ -88,9 +88,11 @@ def _parse_llm_response(raw: str, ctx: CampaignContext) -> ImagePromptResponse:
     if not prompt.endswith(_NO_TEXT_SUFFIX):
         prompt = prompt.rstrip() + " " + _NO_TEXT_SUFFIX
 
+    alt = data.get("alt_text", "").replace("—", " - ").replace("–", " - ")
+
     return ImagePromptResponse(
         final_image_prompt=prompt,
-        alt_text=data.get("alt_text", ""),
+        alt_text=alt,
         metadata={
             "campaign_type": ctx.campaign_type,
             "aspect_ratio": ctx.aspect_ratio,
@@ -106,7 +108,7 @@ async def generate_prompt(
     template_data = _load_template(ctx.campaign_type)
     user_message = _build_user_message(template_data["user"], ctx, retry_suffix)
 
-    client = get_openai_client(settings)
+    client = get_openai_client()
     response = await client.chat.completions.create(
         model=settings.openai_concept_model,
         max_tokens=700,

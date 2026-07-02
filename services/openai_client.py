@@ -4,11 +4,9 @@ from functools import lru_cache
 
 from openai import AsyncOpenAI
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 
 
 @lru_cache
-def get_openai_client(settings: Settings | None = None) -> AsyncOpenAI:
-    if settings is None:
-        settings = get_settings()
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+def get_openai_client() -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=get_settings().openai_api_key)
