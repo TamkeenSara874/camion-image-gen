@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    port: int = 8000
+    port: int = 8010
     log_level: str = "INFO"
     api_bearer_token: str
 

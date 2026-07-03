@@ -70,8 +70,12 @@ Required variables:
 ### 3. Start the backend
 
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8010
 ```
+
+Port 8010, not 8000 -- 8000 is used by this machine's arm-chatbot backend container.
+Change it freely if that's not true in your environment; just keep `PORT` and
+`API_URL` in `.env` in sync with whatever you pick.
 
 CLIP weights (~350 MB) download from HuggingFace on first startup. Subsequent starts are fast.
 
@@ -86,7 +90,7 @@ Open http://localhost:8501
 ### 5. Run the API directly
 
 ```bash
-curl -X POST http://localhost:8000/api/generate-image \
+curl -X POST http://localhost:8010/api/generate-image \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d @sample_payloads/mijos_2_menu_items.json
@@ -103,7 +107,7 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-Backend: http://localhost:8000
+Backend: http://localhost:8010
 Frontend: http://localhost:8501
 
 Note: the backend Docker image is large (~3 GB) because PyTorch is required for CLIP.

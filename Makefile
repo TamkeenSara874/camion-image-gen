@@ -4,7 +4,7 @@ install:
 	pip install -r requirements.txt
 
 dev:
-	uvicorn main:app --reload --port 8000
+	uvicorn main:app --reload --port 8010
 
 frontend:
 	streamlit run frontend/app.py

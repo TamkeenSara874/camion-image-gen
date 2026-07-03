@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 
@@ -11,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_URL = os.getenv("API_URL", "http://localhost:8010")
 API_TOKEN = os.getenv("API_BEARER_TOKEN", "")
 
 RESTAURANTS: dict[int, str] = {
@@ -27,21 +26,22 @@ CAMPAIGN_TYPE_CAPTIONS = {
     "Deals": "Promote a discount, BOGO, or offer",
 }
 
-AUDIENCE_OPTIONS = ["All Guests", "Regulars", "New", "Potential", "VIP", "Lost"]
+# Matches the audience segments named in the task brief exactly.
+AUDIENCE_OPTIONS = ["New", "Potential", "Occasional", "Regular", "Lost"]
 
+# Context tags from the task brief's examples, plus the allergen words real
+# payloads deliberately include (e.g. Flights sends Milk/Wheat/Eggs) so the
+# Stage 3 allergen filter has something to actually filter in a demo.
 TAG_OPTIONS = [
-    "Cocktail", "Wine", "Beer", "Mexican Food Lovers", "Seafood Lovers",
-    "Vegetarian", "Vegan", "Family", "Date Night",
+    "Cocktail", "Wine", "Beer", "Chicken", "Spicy", "Dinner", "Lunch",
+    "Milk", "Eggs", "Wheat", "Sesame", "Shellfish", "Tree Nuts", "Peanuts", "Soy", "Fish",
 ]
 
-DEAL_TYPE_DEFAULTS: dict[str, dict] = {
-    "$ or %OFF": {"discount_type": "percent", "discount_value": 25, "items": "all cocktails"},
-    "BOGO": {"item": "Baja Fish Taco", "qualifying_item": "any taco"},
-    "Fixed Price": {"fixed_price": 29, "description": "3 courses"},
-    "Bundle Deal": {"bundle_items": ["appetizer", "entree", "dessert"], "bundle_price": 45},
-}
+PLATFORM_OPTIONS = ["website", "kiosk", "qr", "pos"]
 
-DEAL_TYPES = list(DEAL_TYPE_DEFAULTS.keys())
+# The two deal_type values that actually appear in the task brief's sample
+# payloads, with the deal_type_vars shape each one really uses.
+DEAL_TYPES = ["Free gift with purchase", "Buy this, get that"]
 
 _CSS = """
 <style>
@@ -89,33 +89,36 @@ def _campaign_type_cards() -> None:
 
 
 def _spotlights_vars() -> dict:
-    name = st.text_input("Spotlight name *", placeholder="Weekend Fiesta")
+    name = st.text_input("Spotlight name *", placeholder="Local Wednesdays")
     desc = st.text_area(
         "Description *",
-        placeholder="Join us every weekend for live music, fresh margaritas, and chef's special tacos.",
+        placeholder="Get 15% off on the entire menu",
         height=80,
     )
-    spotlight_type = st.selectbox("Spotlight type", ["event", "chef", "seasonal", "story"])
-    return {"name": name, "description": desc, "spotlight_type": spotlight_type}
+    # Real payloads send this as "type" (e.g. "Custom Spotlight"), a free-form
+    # label rather than a fixed enum -- match that exactly.
+    spotlight_type = st.text_input("Type", value="Custom Spotlight")
+    return {"name": name, "type": spotlight_type, "description": desc}
 
 
 def _menu_items_vars() -> dict:
-    name = st.text_input("Item name *", placeholder="Baja Fish Taco")
+    name = st.text_input("Item name *", placeholder="2 Carne Asada Tacos")
     desc = st.text_area(
         "Description *",
-        placeholder="Crispy beer-battered fish, fresh pico, avocado crema on a warm corn tortilla.",
+        placeholder="with Cilantro and Onions",
         height=80,
     )
     col_p, col_c = st.columns([1, 2])
     with col_p:
-        price = st.text_input("Price (optional)", placeholder="12")
+        price = st.text_input("Price (optional)", placeholder="5.75")
     with col_c:
-        categories = st.multiselect(
-            "Item categories",
-            ["Tacos", "Burritos", "Cocktails", "Wine", "Beer", "Salads",
-             "Burgers", "Seafood", "Desserts", "Appetizers", "Pasta"],
+        # Real payloads use free-form categories (e.g. "Street Tacos",
+        # "Catering") rather than a fixed picklist.
+        categories_raw = st.text_input(
+            "Item categories (comma-separated)", placeholder="Street Tacos"
         )
     item_menu = st.text_input("Menu section (optional)", placeholder="Main Menu")
+    categories = [c.strip() for c in categories_raw.split(",") if c.strip()]
     return {
         "name": name,
         "description": desc,
@@ -125,33 +128,81 @@ def _menu_items_vars() -> dict:
     }
 
 
+def _deal_type_vars(deal_type: str) -> dict:
+    """Structured inputs matching the exact deal_type_vars shape each real
+    sample payload uses for this deal_type -- not a generic JSON blob."""
+    if deal_type == "Free gift with purchase":
+        col1, col2 = st.columns(2)
+        with col1:
+            purchase_items = st.text_input(
+                "Purchase item(s) (comma-separated)", placeholder="Baja Fish Taco"
+            )
+            no_of_items = st.number_input("Qty to purchase", min_value=1, value=1, step=1)
+        with col2:
+            gift_items = st.text_input(
+                "Gift item(s) (comma-separated)", placeholder="Baja Fish Taco"
+            )
+            gift_items_count = st.number_input("Gift quantity", min_value=1, value=1, step=1)
+        return {
+            "purchase_type": "Item",
+            "purchase_items": [i.strip() for i in purchase_items.split(",") if i.strip()],
+            "no_of_items": int(no_of_items),
+            "gift_items": [i.strip() for i in gift_items.split(",") if i.strip()],
+            "gift_items_count": int(gift_items_count),
+        }
+
+    # "Buy this, get that"
+    col1, col2 = st.columns(2)
+    with col1:
+        purchase_items = st.text_input(
+            "Purchase item(s) (comma-separated)", placeholder="Around the World Flight"
+        )
+        purchase_item_count = st.number_input("Qty to purchase", min_value=1, value=1, step=1)
+        get_type = st.selectbox("Reward type", ["Category", "Item"])
+    with col2:
+        get_items = st.text_input(
+            "Reward item(s)/category (comma-separated)", placeholder="Signature Drink Flights"
+        )
+        get_items_count = st.number_input("Reward quantity", min_value=1, value=1, step=1)
+        save_amount = st.text_input("Save amount", placeholder="24")
+    return {
+        "purchase_type": "Item",
+        "purchase_items": [i.strip() for i in purchase_items.split(",") if i.strip()],
+        "purchase_item_count": int(purchase_item_count),
+        "get_type": get_type,
+        "get_items": [i.strip() for i in get_items.split(",") if i.strip()],
+        "get_items_count": int(get_items_count),
+        "save_amount": save_amount or None,
+        "save_amount_item": "1",
+    }
+
+
 def _deals_vars(deal_type_key: str) -> dict:
-    name = st.text_input("Deal name *", placeholder="Happy Hour Savings")
+    name = st.text_input("Deal name *", placeholder="Buy 1 Get 1 Free test")
     desc = st.text_area(
         "Description (optional)",
-        placeholder="Enjoy 25% off all cocktails and wines during happy hour.",
-        height=60,
+        placeholder="Buy 1 Baja Fish Taco and get one free!",
+        height=68,
     )
     deal_type = st.selectbox("Deal type *", DEAL_TYPES, key="deal_type_sel")
-    default_vars = json.dumps(DEAL_TYPE_DEFAULTS.get(deal_type, {}), indent=2)
-    deal_vars_str = st.text_area("Deal variables (JSON)", value=default_vars, height=80)
+    st.caption("Deal variables")
+    deal_vars = _deal_type_vars(deal_type)
+
+    platforms = st.multiselect("Platforms", PLATFORM_OPTIONS, default=["website"])
+
     col_sd, col_ed = st.columns(2)
     with col_sd:
-        start_date = st.text_input("Start date", placeholder="2026-07-01")
+        start_date = st.text_input("Start date", placeholder="2026-06-18")
     with col_ed:
         end_date = st.text_input("End date", placeholder="2026-08-31")
-    promo_code = st.text_input("Promo code (optional)", placeholder="SUMMER25")
-
-    try:
-        deal_vars = json.loads(deal_vars_str) if deal_vars_str.strip() else {}
-    except json.JSONDecodeError:
-        deal_vars = {}
+    promo_code = st.text_input("Promo code (optional, leave blank for none)", placeholder="")
 
     return {
         "name": name,
         "description": desc or None,
         "deal_type": deal_type,
         "deal_type_vars": deal_vars,
+        "platforms": platforms,
         "start_date": start_date or None,
         "end_date": end_date or None,
         "promo_code": promo_code or None,
@@ -172,7 +223,7 @@ def _generation_form(ct: str) -> dict | None:
 
         col_aud, col_voice = st.columns(2)
         with col_aud:
-            audiences = st.multiselect("Target audiences *", AUDIENCE_OPTIONS, default=["All Guests"])
+            audiences = st.multiselect("Target audiences *", AUDIENCE_OPTIONS, default=["New"])
         with col_voice:
             brand_voice = st.text_input("Brand voice", value="Casual, Friendly")
 
@@ -192,7 +243,7 @@ def _generation_form(ct: str) -> dict | None:
             custom_prompt = st.text_area(
                 "Custom prompt (appended to AI-generated prompt)",
                 placeholder="Use dramatic backlighting. Focus on the golden crust.",
-                height=60,
+                height=68,
             )
             cta = st.checkbox("Enable CTA overlay")
 
@@ -249,7 +300,7 @@ def _call_api(payload: dict) -> dict | None:
     except requests.exceptions.ConnectionError:
         st.error(
             f"Cannot connect to the backend at {API_URL}. "
-            "Start it with: uvicorn main:app --reload --port 8000"
+            "Start it with: uvicorn main:app --reload --port 8010"
         )
         return None
     except requests.exceptions.Timeout:
