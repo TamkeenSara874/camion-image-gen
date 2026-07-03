@@ -24,3 +24,14 @@ class CampaignPayload(BaseModel):
         if not v.strip():
             raise ValueError("campaign_type must not be empty")
         return v
+
+    @field_validator("campaign_guest_tags", mode="before")
+    @classmethod
+    def coerce_guest_tags(cls, v: Any) -> Any:
+        # Upstream sends "" instead of [] when there are no tags (seen in real
+        # campaign payloads); Pydantic won't coerce a bare string into a list.
+        if v == "" or v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v

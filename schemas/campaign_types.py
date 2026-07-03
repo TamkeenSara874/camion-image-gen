@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class SpotlightsVars(BaseModel):
     name: str
     description: str
-    spotlight_type: str | None = None
+    # Real campaign payloads send this as "type"; the field is named
+    # spotlight_type internally to avoid shadowing Python builtins/keywords.
+    spotlight_type: str | None = Field(
+        default=None, validation_alias=AliasChoices("type", "spotlight_type")
+    )
 
 
 class MenuItemsVars(BaseModel):
@@ -24,6 +28,7 @@ class DealsVars(BaseModel):
     description: str | None = None
     deal_type: str
     deal_type_vars: dict[str, Any]
+    platforms: list[str] = []
     start_date: str | None = None
     end_date: str | None = None
     promo_code: str | None = None

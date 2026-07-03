@@ -38,9 +38,9 @@ Pass condition: none of the allergen words appear in the OCR output.
 This check is deterministic — the same image produces the same result every run.
 It is free and does not require an API call.
 
-### Tier 2 — Vision QA (gpt-4.1)
+### Tier 2 — Vision QA (gpt-4.1-mini)
 
-Model: gpt-4.1 (detail=high)
+Model: gpt-4.1-mini (detail=high)
 Input: final composite image (after text overlay)
 Output: JSON with `stray_model_text`, `brand_fidelity_score` (1-5), `composition_score` (1-5), `issues`
 
@@ -117,7 +117,7 @@ Score each image as PASS or FAIL based on:
 
 Common disagreements to watch for:
 - Auto=FAIL, Human=PASS: CLIP threshold too strict for abstract food items
-- Auto=PASS, Human=FAIL: stray text missed by gpt-4.1 vision (try detail=high)
+- Auto=PASS, Human=FAIL: stray text missed by gpt-4.1-mini vision (try detail=high)
 
 ---
 

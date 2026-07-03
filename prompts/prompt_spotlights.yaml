@@ -13,6 +13,7 @@ user: |
   Brand atmosphere: {brand_theme}
   Visual style: {visual_style}
   Campaign: {main_title}
+  Spotlight type: {spotlight_type}
   Spotlight details: {main_offer}
   Campaign goal: {campaign_goal}
   Target audience: {audience}

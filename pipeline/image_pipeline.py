@@ -35,6 +35,13 @@ from stages.qa_validator import (
 )
 from stages.text_compositor import composite
 from stages.validator import validate as validate_payload
+from utils.metrics import (
+    CLIP_SCORE_HISTOGRAM,
+    IMAGE_GENERATION_COST,
+    IMAGE_GENERATION_LATENCY,
+    IMAGE_GENERATION_REQUESTS_TOTAL,
+    QA_RETRY_TOTAL,
+)
 
 logger = structlog.get_logger()
 
@@ -170,6 +177,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     qa_retries = 0
     need_synthesis = True
     run_vision = True
+    last_failure_category: _FailureCategory | None = None
 
     while True:
         if qa_retries > 0 and need_synthesis:
@@ -256,6 +264,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
 
         if not qa_result.qa_passed and settings.qa_enabled and qa_retries < settings.qa_retry_limit:
             failure_cat = _classify_failure(qa_result)
+            last_failure_category = failure_cat
             need_synthesis = failure_cat != _FailureCategory.COMPOSITOR
             run_vision = need_synthesis
             qa_retries += 1
@@ -272,6 +281,18 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     metrics.total_cost_usd = sum(s.estimated_cost_usd for s in metrics.stages)
 
     _daily_counts[count_key] += 1
+
+    IMAGE_GENERATION_REQUESTS_TOTAL.labels(
+        campaign_type=metrics.campaign_type,
+        model=metrics.synthesis_model or "unknown",
+        qa_passed=str(metrics.qa_passed).lower(),
+    ).inc()
+    IMAGE_GENERATION_LATENCY.observe(metrics.total_latency_ms / 1000)
+    IMAGE_GENERATION_COST.observe(metrics.total_cost_usd)
+    if qa_retries and last_failure_category is not None:
+        QA_RETRY_TOTAL.labels(reason=last_failure_category.value).inc(qa_retries)
+    if clip_score is not None:
+        CLIP_SCORE_HISTOGRAM.observe(clip_score)
 
     log.info(
         "request_complete",

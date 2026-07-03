@@ -46,6 +46,9 @@ def _build_user_message(template: str, ctx: CampaignContext, retry_suffix: str) 
         ", ".join(item_category) if isinstance(item_category, list) else str(item_category)
     )
     deal_type = ctx.extra_vars.get("deal_type", "")
+    platforms = ctx.extra_vars.get("platforms") or []
+    platforms_str = ", ".join(platforms) if platforms else "all channels"
+    spotlight_type = ctx.extra_vars.get("spotlight_type") or "general"
 
     filled = template.format(
         restaurant_name=ctx.restaurant.restaurant_name,
@@ -65,6 +68,8 @@ def _build_user_message(template: str, ctx: CampaignContext, retry_suffix: str) 
         custom_prompt_block=custom_prompt_block,
         item_category=item_category_str,
         deal_type=deal_type,
+        platforms=platforms_str,
+        spotlight_type=spotlight_type,
     )
 
     if retry_suffix:

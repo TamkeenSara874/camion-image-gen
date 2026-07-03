@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import time
 from typing import Any
 
@@ -11,6 +12,8 @@ from openai import BadRequestError
 from app.config import Settings
 from schemas.internal import CampaignContext, ImagePromptResponse, SynthesisResult
 from services.openai_client import get_openai_client
+
+logger = logging.getLogger(__name__)
 
 _HF_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
 
@@ -112,8 +115,10 @@ async def synthesize(
                     model_used=settings.openai_image_model,
                     attempt_number=1,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Attempt 1 (%s) failed: %s: %s", settings.openai_image_model, type(exc).__name__, exc
+            )
 
     if not _breaker.is_open:
         sanitized = prompt.rstrip() + _SAFETY_SUFFIX
@@ -127,8 +132,11 @@ async def synthesize(
                     model_used=settings.openai_image_model,
                     attempt_number=2,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Attempt 2 (%s, sanitized) failed: %s: %s",
+                settings.openai_image_model, type(exc).__name__, exc,
+            )
 
     if not _breaker.is_open:
         try:
@@ -141,8 +149,11 @@ async def synthesize(
                     model_used=settings.openai_image_fallback_model,
                     attempt_number=3,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Attempt 3 (%s) failed: %s: %s",
+                settings.openai_image_fallback_model, type(exc).__name__, exc,
+            )
 
     if not _breaker.is_open:
         try:
@@ -155,8 +166,14 @@ async def synthesize(
                     model_used=settings.openai_image_fallback_model_2,
                     attempt_number=4,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Attempt 4 (%s) failed: %s: %s",
+                settings.openai_image_fallback_model_2, type(exc).__name__, exc,
+            )
+
+    if _breaker.is_open:
+        logger.warning("Circuit breaker open, skipped all OpenAI attempts this request")
 
     if settings.hf_token:
         payload: dict[str, Any] = {
@@ -180,6 +197,7 @@ async def synthesize(
             orientation_preserved=(size == "1024x1024"),
         )
 
+    logger.error("All image synthesis attempts failed and no HF_TOKEN is configured")
     raise RuntimeError(
         "All image synthesis attempts failed. "
         "Set HF_TOKEN in .env to enable the free FLUX fallback."

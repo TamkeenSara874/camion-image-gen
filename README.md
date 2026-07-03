@@ -16,7 +16,7 @@ Stage 3  Campaign Parser    Sanitize inputs, build CampaignContext
 Stage 4  Prompt Generator   gpt-4o-mini -> background scene description
 Stage 5  Image Synthesizer  gpt-image-2 (3 fallbacks including free HF FLUX)
 Stage 6  Text Compositor    Pillow overlay: name, price, CTA strip
-Stage 7  QA Validator       CLIP + OCR + gpt-4.1 vision scoring
+Stage 7  QA Validator       CLIP + OCR + gpt-4.1-mini vision scoring
         |
         v
 R2 upload -> ImageGenerationResponse (URL, metrics, QA scores)
@@ -32,7 +32,7 @@ compositor failures (re-run Stage 6 only).
 
 - Python 3.11+
 - Tesseract OCR: `choco install tesseract` (Windows) or `apt install tesseract-ocr` (Linux)
-- OpenAI API key with access to: `gpt-4o-mini`, `gpt-4.1`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini`
+- OpenAI API key with access to: `gpt-4o-mini`, `gpt-4.1-mini`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini`
 - Cloudflare R2 bucket (free tier: 10 GB storage, 1M requests/month)
 - HuggingFace token (optional, enables free FLUX.1-schnell fallback)
 
@@ -147,7 +147,7 @@ python run_batch.py --prompts-only
 pytest tests/ -v
 ```
 
-147 tests, 88% coverage. Integration tests mock all external calls (OpenAI, R2).
+151 tests, 90% coverage. Integration tests mock all external calls (OpenAI, R2).
 
 ---
 

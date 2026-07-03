@@ -15,6 +15,7 @@ user: |
   Deal name: {main_title}
   Deal description: {main_offer}
   Deal type: {deal_type}
+  Where this deal is redeemable: {platforms}
   Campaign goal: {campaign_goal}
   Target audience: {audience}
   Brand voice: {brand_voice}

@@ -86,7 +86,11 @@ def _extract_fields(
     vars_obj: BaseModel, brand: RestaurantBrand
 ) -> tuple[str, str | None, dict[str, Any]]:
     if isinstance(vars_obj, SpotlightsVars):
-        return sanitize_user_text(vars_obj.description), None, {}
+        return (
+            sanitize_user_text(vars_obj.description),
+            None,
+            {"spotlight_type": vars_obj.spotlight_type},
+        )
     if isinstance(vars_obj, MenuItemsVars):
         price = f"{brand.currency_symbol}{vars_obj.price}" if vars_obj.price else None
         return (
@@ -102,6 +106,7 @@ def _extract_fields(
                 "deal_type": vars_obj.deal_type,
                 "deal_type_vars": vars_obj.deal_type_vars,
                 "promo_code": vars_obj.promo_code,
+                "platforms": vars_obj.platforms,
             },
         )
     return "", None, {}

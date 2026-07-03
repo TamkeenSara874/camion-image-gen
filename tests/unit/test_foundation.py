@@ -99,7 +99,7 @@ def test_settings_defaults_load():
     assert s.openai_image_model == "gpt-image-2"
     assert s.openai_image_fallback_model == "gpt-image-1.5"
     assert s.openai_image_fallback_model_2 == "gpt-image-1-mini"
-    assert s.openai_qa_model == "gpt-4.1"
+    assert s.openai_qa_model == "gpt-4.1-mini"
     assert s.cta_overlay_enabled is False
     assert s.max_images_per_restaurant_per_day == 50
     assert s.qa_brand_fidelity_threshold == 4
