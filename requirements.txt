@@ -13,8 +13,8 @@ structlog==24.4.0
 prometheus-client==0.21.0
 Pillow==11.1.0
 pytesseract==0.3.13
-open-clip-torch==2.26.1
-torch==2.3.1
+open-clip-torch>=2.26.1
+torch>=2.6.0
 colorthief==0.2.1
 streamlit==1.41.1
 requests==2.32.3
