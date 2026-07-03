@@ -188,3 +188,24 @@ async def test_composite_sets_text_was_truncated_flag():
     result = await composite(_blank_image(100, 100), ctx, _fake_settings())
     assert isinstance(result, CompositeResult)
     assert result.text_was_truncated is True
+
+
+def test_wrap_two_lines_does_not_orphan_punctuation():
+    """Regression test: a long deal offer used to be split on a fixed
+    character count (main_offer[:55], main_offer[55:100]), which could land
+    mid-clause and leave a second line starting with stray punctuation, e.g.
+    ", Monday through Friday." Word-boundary wrapping must not do that."""
+    from PIL import ImageDraw
+
+    from stages.text_compositor import _FONT_BOLD, _wrap_two_lines
+
+    img = Image.new("RGB", (1536, 1024))
+    draw = ImageDraw.Draw(img)
+    text = "Enjoy 25% off all cocktails and wines during happy hour, Monday through Friday."
+
+    line1, line2 = _wrap_two_lines(draw, text, _FONT_BOLD, 100, max_width=650)
+
+    assert line1 and line1[0] not in ",.;:"
+    assert not line2 or line2[0] not in ",.;:"
+    # No words lost or duplicated across the split.
+    assert f"{line1} {line2}".split() == text.split()

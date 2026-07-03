@@ -1,0 +1,19 @@
+{
+  "campaign_type": "Menu Items",
+  "campaign_goals": "Increase Item Sales",
+  "campaign_audiences": ["Regular", "Occasional"],
+  "campaign_guest_tags": ["Shellfish", "Spicy", "Dinner"],
+  "campaign_vars": {
+    "name": "Camarones a la Diabla",
+    "item_category": ["Seafood", "Entrees"],
+    "price": "18.50",
+    "description": "Spicy shrimp simmered in a fiery chile de arbol sauce, served with rice and warm tortillas",
+    "item_menu": "Dinner Menu"
+  },
+  "cta": true,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Bold, Spicy, Confident",
+  "restaurantId": 2,
+  "orientation": "Square",
+  "custom_prompt": "Emphasize steam rising off the dish and glistening chile oil."
+}

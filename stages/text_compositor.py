@@ -61,6 +61,31 @@ def _fit_text(
     return text + "...", font
 
 
+def _wrap_two_lines(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_path: str,
+    size: int,
+    max_width: int,
+) -> tuple[str, str]:
+    """Split text into two lines on word boundaries, filling line 1 to
+    max_width. Never orphans punctuation the way a raw character-index
+    slice does (e.g. splitting "...happy hour, Monday..." at a fixed
+    character count can leave a line starting with ", Monday")."""
+    font = _get_font(font_path, size)
+    words = text.split()
+    line1: list[str] = []
+    i = 0
+    while i < len(words):
+        candidate = " ".join([*line1, words[i]])
+        if not line1 or draw.textlength(candidate, font=font) <= max_width:
+            line1.append(words[i])
+            i += 1
+        else:
+            break
+    return " ".join(line1), " ".join(words[i:])
+
+
 def _draw_text_center_y(
     draw: ImageDraw.ImageDraw,
     x: int,
@@ -190,25 +215,30 @@ def _composite_deals(
         text_truncated = True
     draw.text((padding, int(h * 0.17)), title_text, font=title_font, fill=text_color)
 
-    # Main offer: large, accent color — the visual centrepiece
+    # Main offer: large, accent color — the visual centrepiece.
+    # Wrapped on word boundaries so a long offer never orphans a fragment
+    # like ", Monday through Friday." onto its own line.
     offer_font_size = int(h * 0.10)
-    offer_short = ctx.main_offer[:55].rstrip()
-    offer_text, offer_font = _fit_text(draw, offer_short, _FONT_BOLD, offer_font_size, max_text_w)
-    if offer_text.endswith("..."):
+    offer_line, offer_remainder = _wrap_two_lines(
+        draw, ctx.main_offer, _FONT_BOLD, offer_font_size, max_text_w
+    )
+    offer_text, offer_font = _fit_text(draw, offer_line, _FONT_BOLD, offer_font_size, max_text_w)
+    if offer_text.endswith("...") or (offer_remainder and offer_text != offer_line):
         text_truncated = True
     draw.text((padding, int(h * 0.33)), offer_text, font=offer_font, fill=accent_color)
 
-    # Secondary offer line (remainder of offer, smaller)
-    if len(ctx.main_offer) > 55:
-        remainder = ctx.main_offer[55:100].strip()
+    # Secondary offer line (word-boundary remainder of offer, smaller)
+    if offer_remainder:
         sec_font_size = int(h * 0.040)
         sec_text, sec_font = _fit_text(
             draw,
-            remainder,
+            offer_remainder,
             _FONT_REGULAR if Path(_FONT_REGULAR).exists() else _FONT_BOLD,
             sec_font_size,
             max_text_w,
         )
+        if sec_text.endswith("..."):
+            text_truncated = True
         draw.text((padding, int(h * 0.50)), sec_text, font=sec_font, fill=text_color)
 
     if settings.cta_overlay_enabled and ctx.cta and ctx.cta_text:
