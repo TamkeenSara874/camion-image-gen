@@ -10,8 +10,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-API_URL = os.getenv("API_URL", "http://localhost:8010")
-API_TOKEN = os.getenv("API_BEARER_TOKEN", "")
+def _config(key: str, default: str = "") -> str:
+    """Streamlit Cloud has no .env file -- config is set via its Secrets UI,
+    which populates st.secrets, not os.environ. Local dev keeps using .env
+    via python-dotenv. Try st.secrets first, fall back to the environment."""
+    try:
+        return str(st.secrets[key])
+    except (KeyError, FileNotFoundError):
+        return os.getenv(key, default)
+
+
+API_URL = _config("API_URL", "http://localhost:8010")
+API_TOKEN = _config("API_BEARER_TOKEN", "")
 
 RESTAURANTS: dict[int, str] = {
     2: "Mijo's Taqueria",
