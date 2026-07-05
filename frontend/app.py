@@ -26,6 +26,31 @@ CAMPAIGN_TYPE_CAPTIONS = {
     "Deals": "Promote a discount, BOGO, or offer",
 }
 
+# Matches the four campaign_goals values named in the task brief exactly --
+# each maps to a distinct visual-direction instruction in
+# stages/campaign_parser.py's _GOAL_DIRECTIVES (e.g. "Increase Item Sales" ->
+# focus tightly on the item as the hero subject).
+GOAL_OPTIONS = [
+    "Increase Online Orders",
+    "Increase Item Sales",
+    "Increase Deal Sales",
+    "Increase Guest Visits",
+]
+
+GOAL_CAPTIONS = {
+    "Increase Online Orders": "Orderable, action-driven shot",
+    "Increase Item Sales": "Item is the unmistakable hero subject",
+    "Increase Deal Sales": "Makes the offer's value obvious",
+    "Increase Guest Visits": "Emphasizes the in-restaurant experience",
+}
+
+# Sensible default goal per campaign type; user can override.
+_DEFAULT_GOAL_BY_TYPE = {
+    "Spotlights": "Increase Guest Visits",
+    "Menu Items": "Increase Item Sales",
+    "Deals": "Increase Deal Sales",
+}
+
 # Matches the audience segments named in the task brief exactly.
 AUDIENCE_OPTIONS = ["New", "Potential", "Occasional", "Regular", "Lost"]
 
@@ -221,13 +246,19 @@ def _generation_form(ct: str) -> dict | None:
         with col_o:
             orientation = st.selectbox("Orientation", ["Landscape", "Portrait", "Square"])
 
-        col_aud, col_voice = st.columns(2)
+        col_goal, col_aud = st.columns(2)
+        with col_goal:
+            default_goal = _DEFAULT_GOAL_BY_TYPE.get(ct, GOAL_OPTIONS[0])
+            goal = st.selectbox("Campaign goal", GOAL_OPTIONS, index=GOAL_OPTIONS.index(default_goal))
+            st.caption(GOAL_CAPTIONS[goal])
         with col_aud:
             audiences = st.multiselect("Target audiences *", AUDIENCE_OPTIONS, default=["New"])
+
+        col_voice, col_tags = st.columns([1, 2])
         with col_voice:
             brand_voice = st.text_input("Brand voice", value="Casual, Friendly")
-
-        guest_tags = st.multiselect("Guest tags (optional)", TAG_OPTIONS)
+        with col_tags:
+            guest_tags = st.multiselect("Guest tags (optional)", TAG_OPTIONS)
 
         st.divider()
         st.markdown("**Campaign content**")
@@ -271,7 +302,7 @@ def _generation_form(ct: str) -> dict | None:
 
     return {
         "campaign_type": ct,
-        "campaign_goals": "Increase Sales",
+        "campaign_goals": goal,
         "campaign_audiences": audiences,
         "campaign_guest_tags": guest_tags,
         "campaign_vars": campaign_vars,

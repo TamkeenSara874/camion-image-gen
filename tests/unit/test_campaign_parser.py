@@ -269,3 +269,57 @@ def test_context_carries_restaurant_brand(mijos):
     ctx = parse(_payload("Spotlights", {"name": "T", "description": "D"}), mijos)
     assert ctx.restaurant.restaurant_name == "Mijo's Taqueria"
     assert ctx.restaurant.brand_colors["primary"] == "#C8410A"
+
+
+def test_known_goal_maps_to_specific_direction(mijos):
+    payload = _payload(
+        "Menu Items",
+        {"name": "Tacos", "description": "D", "price": "5"},
+        campaign_goals="Increase Item Sales",
+    )
+    ctx = parse(payload, mijos)
+    assert "hero subject" in ctx.goal_direction
+
+
+def test_different_known_goals_map_to_different_directions(mijos):
+    orders = parse(
+        _payload("Spotlights", {"name": "T", "description": "D"}, campaign_goals="Increase Online Orders"),
+        mijos,
+    )
+    visits = parse(
+        _payload("Spotlights", {"name": "T", "description": "D"}, campaign_goals="Increase Guest Visits"),
+        mijos,
+    )
+    assert orders.goal_direction != visits.goal_direction
+
+
+def test_unknown_goal_falls_back_to_default_direction(mijos):
+    payload = _payload(
+        "Spotlights", {"name": "T", "description": "D"}, campaign_goals="Some Future Goal Type"
+    )
+    ctx = parse(payload, mijos)
+    assert ctx.goal_direction  # non-empty, doesn't crash on an unrecognized goal
+
+
+def test_lost_audience_takes_priority_when_multiple_present(mijos):
+    payload = _payload(
+        "Spotlights",
+        {"name": "T", "description": "D"},
+        campaign_audiences=["Potential", "New", "Occasional", "Regular", "Lost"],
+    )
+    ctx = parse(payload, mijos)
+    assert "Reactivation" in ctx.audience_tone
+
+
+def test_new_audience_maps_to_welcoming_tone(mijos):
+    payload = _payload("Spotlights", {"name": "T", "description": "D"}, campaign_audiences=["New"])
+    ctx = parse(payload, mijos)
+    assert "Welcoming" in ctx.audience_tone
+
+
+def test_unknown_audience_falls_back_to_default_tone(mijos):
+    payload = _payload(
+        "Spotlights", {"name": "T", "description": "D"}, campaign_audiences=["Some Future Segment"]
+    )
+    ctx = parse(payload, mijos)
+    assert ctx.audience_tone  # non-empty, doesn't crash on an unrecognized audience

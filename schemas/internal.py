@@ -14,6 +14,7 @@ class RestaurantBrand:
     website_url: str
     brand_colors: dict[str, str]
     currency_symbol: str = "$"
+    logo_path: str | None = None
 
 
 @dataclass
@@ -34,6 +35,8 @@ class CampaignContext:
     aspect_ratio: str
     custom_prompt: str | None
     extra_vars: dict[str, Any] = field(default_factory=dict)
+    goal_direction: str = ""
+    audience_tone: str = ""
 
 
 @dataclass

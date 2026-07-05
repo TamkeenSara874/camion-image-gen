@@ -5,9 +5,10 @@
     "brand_theme": "vibrant, festive, warm and inviting taqueria atmosphere",
     "visual_style": "rustic wood textures, terracotta tones, colorful folk art",
     "website_url": "https://www.mijostaqueria.com",
+    "logo_path": "config/logos/2.png",
     "brand_colors": {
-      "primary": "#C8410A",
-      "accent": "#F5A623",
+      "primary": "#4D6D22",
+      "accent": "#DCCEC4",
       "text_on_primary": "#FFFFFF"
     },
     "currency_symbol": "$"
@@ -18,6 +19,7 @@
     "brand_theme": "sophisticated, contemporary, wine-forward dining experience",
     "visual_style": "clean lines, deep jewel tones, elegant minimalist presentation",
     "website_url": "https://www.flightsrestaurant.com",
+    "logo_path": "config/logos/4.png",
     "brand_colors": {
       "primary": "#1A2744",
       "accent": "#C9A96E",

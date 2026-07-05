@@ -15,8 +15,8 @@ user: |
   Item name: {main_title}
   Item description: {main_offer}
   Item category: {item_category}
-  Campaign goal: {campaign_goal}
-  Target audience: {audience}
+  Campaign goal: {campaign_goal} -- visual direction: {goal_direction}
+  Target audience: {audience} -- tone: {audience_tone}
   Brand voice: {brand_voice}
   Image format: {aspect_ratio} ({image_size})
   Color palette: primary {primary_hex}, accent {accent_hex}

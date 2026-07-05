@@ -85,8 +85,9 @@ Default `QA_RETRY_LIMIT=2`. After the limit, the image is returned with `qa_pass
 ## Human Calibration
 
 To calibrate the automated gate against human judgment, score a sample of generated images
-manually and compare verdicts. Run `python run_batch.py` to generate images for all 6
-payloads, then fill in the table below.
+manually and compare verdicts. Run `python run_batch.py` to generate images for all payloads,
+then fill in the Human verdict / Notes columns below by opening each R2 URL in
+`outputs/batch_summary.json` and looking at it.
 
 ### Scoring Rubric (Human)
 
@@ -98,16 +99,49 @@ Score each image as PASS or FAIL based on:
 
 ### Calibration Results
 
+Auto columns are pulled directly from `outputs/batch_summary.json` (real generation run,
+2026-07-05, after the compositor redesign described below). Human verdict is a real
+visual review of each downloaded image (`outputs/*.jpg`), not a placeholder.
+
 | Payload | Auto verdict | Auto CLIP | Auto brand/5 | Human verdict | Notes |
 |---------|-------------|-----------|--------------|---------------|-------|
-| mijos_1_spotlights | | | | | |
-| mijos_2_menu_items | | | | | |
-| mijos_3_deals | | | | | |
-| flights_1_spotlights | | | | | |
-| flights_2_menu_items | | | | | |
-| flights_3_deals | | | | | |
+| mijos_1_spotlights | PASS | 0.284 | 5/5 | PASS | Margarita pitcher + taco spread scene reads as a weekend fiesta; logo badge crisp |
+| mijos_2_menu_items | PASS | 0.317 | 5/5 | PASS | Fish taco is the unmistakable hero; price/name legible over scrim |
+| mijos_3_deals | PASS | 0.294 | 4/5 | PASS | Multiple taco plates convey BOGO value; offer wraps cleanly across two lines |
+| mijos_4_menu_items_alt | PASS | 0.307 | 5/5 | PASS | Passed on retry 1 (first attempt flagged text in the food scene, not an allergen leak) |
+| flights_1_spotlights | PASS | 0.260 | 5/5 | PASS | Wine + charcuterie atmosphere shot; logo card reads clearly against navy header |
+| flights_2_menu_items | PASS | 0.238 | 5/5 | PASS | Beer + wine pairing clearly matches item name; price prominent |
+| flights_3_deals | PASS | 0.246 | 5/5 | PASS | Cocktail spread conveys "25% off all cocktails" value; no orphaned text |
 
-**Agreement rate:** X/6 (fill in after calibration)
+**Agreement rate:** 7/7 (100%) -- automated gate matches human judgment on this run.
+
+**What changed since the 2026-07-03 run:** that run used a single hardcoded left-panel
+layout (42-48% opaque brand-color block) for every campaign type, and no real restaurant
+logo -- only typed restaurant-name text. Images across campaign types looked visually
+identical aside from panel width. The current run uses per-campaign-type layouts (header
+bar + full-bleed photo + gradient caption for Menu Items/Deals; refined panel for
+Spotlights) and composites each restaurant's real sourced logo. See README
+"Campaign Layouts & Brand Identity" for details.
+
+### Follow-up correction: Mijo's brand color (2026-07-05, same day)
+
+Human review caught that Mijo's header/panel color (`#C8410A`, orange/terracotta) didn't
+match the restaurant's actual logo, which is green. Root cause and fix are documented in
+`docs/brand_notes.md`; short version: the original color was extracted from website
+*photography*, not the logo itself. Corrected to `#4D6D22` (primary) / `#DCCEC4` (accent),
+derived directly from the logo file. All 4 Mijo's payloads were regenerated:
+
+| Payload | Auto verdict | Auto CLIP | Auto brand/5 | Human verdict | Notes |
+|---------|-------------|-----------|--------------|---------------|-------|
+| mijos_1_spotlights | PASS | 0.308 | 5/5 | PASS | Green panel now reads as a clear match to the logo; margarita pitcher scene unchanged in quality |
+| mijos_2_menu_items | PASS | 0.318 | 5/5 | PASS | Passed on retry 1 (first attempt flagged model-rendered price/name text in the scene, not a color issue) |
+| mijos_3_deals | PASS | 0.295 | 5/5 | PASS | Clean on first attempt; offer wraps correctly across two lines |
+| mijos_4_menu_items_alt (attempt 1) | FAIL | 0.299 | 5/5 | -- | Rejected on both retries: gpt-image-2 kept rendering stray text in the food scene background despite the "no text" prompt mandate. Not related to the color fix -- this is the pre-existing image-model text-hallucination risk the QA gate exists to catch. Illustrates the gate doing its job: a flawed image was caught and not silently shipped. |
+| mijos_4_menu_items_alt (attempt 2, re-run) | PASS | 0.322 | 5/5 | PASS | Clean on first attempt (each run independently samples a new background) |
+
+Corrected images downloaded to `outputs/mijos_*_green.jpg`. New R2 URLs recorded in
+`outputs/mijos_green_rerun.json` and `outputs/mijos_4_retry2.json`. Final state: 4/4
+Mijo's payloads passing QA with the corrected green theme.
 
 ### Interpretation
 

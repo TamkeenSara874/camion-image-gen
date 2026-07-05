@@ -37,6 +37,55 @@ _CHANNEL_SIZE: dict[str, tuple[str, str]] = {
     "Website": ("1536x1024", "16:9"),
 }
 
+# campaign_goals -> visual composition directive, per the task spec's explicit
+# mapping (e.g. "Increase Online Orders -> food should look orderable and
+# action-driven"). Fed to the LLM as an explicit instruction instead of relying
+# on it to infer the right composition from the raw goal label alone.
+_GOAL_DIRECTIVES: dict[str, str] = {
+    "Increase Online Orders": (
+        "Make the food look immediately orderable and craveable: an action-driven, "
+        "takeout/delivery-ready shot that sells the food itself."
+    ),
+    "Increase Item Sales": (
+        "Focus tightly on the item as the unmistakable hero subject: a clean, "
+        "high-detail product shot with nothing competing for attention."
+    ),
+    "Increase Deal Sales": (
+        "Make the value of the offer visually obvious: generous portions or an "
+        "abundant spread that reads as a great deal at a glance."
+    ),
+    "Increase Guest Visits": (
+        "Emphasize the in-restaurant experience and atmosphere over any single "
+        "dish, so the scene makes viewers want to visit in person."
+    ),
+}
+_DEFAULT_GOAL_DIRECTIVE = "Create an appetizing, on-brand scene that supports this campaign's goal."
+
+# campaign_audiences -> tone directive, per the task spec (e.g. "Lost ->
+# reactivation-focused and persuasive"). Checked in priority order when a
+# payload lists multiple audiences, favoring the segment with the most
+# distinct campaign treatment.
+_AUDIENCE_TONE_PRIORITY: tuple[str, ...] = ("Lost", "Occasional", "Regular", "New", "Potential")
+_AUDIENCE_TONES: dict[str, str] = {
+    "New": "Welcoming and introductory: make a great first impression.",
+    "Potential": "Welcoming and introductory: make a great first impression.",
+    "Occasional": "Friendly reminder tone: warm, familiar, low-pressure.",
+    "Lost": "Reactivation-focused and persuasive: give them a clear reason to come back.",
+    "Regular": "Loyalty and familiarity: warm and appreciative of the relationship.",
+}
+_DEFAULT_AUDIENCE_TONE = "Friendly and inclusive, suitable for a general audience."
+
+
+def _goal_direction(campaign_goal: str) -> str:
+    return _GOAL_DIRECTIVES.get(campaign_goal, _DEFAULT_GOAL_DIRECTIVE)
+
+
+def _audience_tone(audiences: list[str]) -> str:
+    for key in _AUDIENCE_TONE_PRIORITY:
+        if key in audiences:
+            return _AUDIENCE_TONES[key]
+    return _DEFAULT_AUDIENCE_TONE
+
 
 def sanitize_user_text(text: str) -> str:
     for pattern in _INJECTION_PATTERNS:
@@ -66,6 +115,8 @@ def parse(payload: CampaignPayload, brand: RestaurantBrand) -> CampaignContext:
         restaurant=brand,
         campaign_type=payload.campaign_type,
         campaign_goal=sanitize_user_text(payload.campaign_goals),
+        goal_direction=_goal_direction(payload.campaign_goals),
+        audience_tone=_audience_tone(payload.campaign_audiences),
         main_title=sanitize_user_text(vars_obj.name),  # type: ignore[attr-defined]
         main_offer=main_offer,
         price=price,

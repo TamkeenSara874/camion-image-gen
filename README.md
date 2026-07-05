@@ -13,9 +13,9 @@ POST /api/generate-image
 Stage 1  Validator          Registry-based schema check per campaign type
 Stage 2  Brand Mapper       restaurantId -> brand colors, theme, visual style
 Stage 3  Campaign Parser    Sanitize inputs, build CampaignContext
-Stage 4  Prompt Generator   gpt-4o-mini -> background scene description
+Stage 4  Prompt Generator   gpt-4o-mini -> background scene description (goal/audience-aware)
 Stage 5  Image Synthesizer  gpt-image-2 (3 fallbacks including free HF FLUX)
-Stage 6  Text Compositor    Pillow overlay: name, price, CTA strip
+Stage 6  Text Compositor    Pillow: real logo + header/panel + name, price, CTA pill
 Stage 7  QA Validator       CLIP + OCR + gpt-4.1-mini vision scoring
         |
         v
@@ -151,7 +151,7 @@ python run_batch.py --prompts-only
 pytest tests/ -v
 ```
 
-151 tests, 90% coverage. Integration tests mock all external calls (OpenAI, R2).
+170 tests. Integration tests mock all external calls (OpenAI, R2).
 
 ---
 
@@ -240,7 +240,36 @@ YAML template to `prompts/`. No pipeline code changes required.
 | 2 | Mijo's Taqueria | Vibrant, festive Mexican |
 | 4 | Flights Restaurant | Sophisticated, wine-forward American |
 
-Adding a new restaurant: add a JSON object to `config/restaurant_brands.json`. No code changes.
+Adding a new restaurant: add a JSON object to `config/restaurant_brands.json`, run
+`scripts/extract_brand_colors.py` and `scripts/fetch_brand_logo.py`. No code changes.
+See `docs/brand_notes.md` for the full walkthrough.
+
+---
+
+## Campaign Layouts & Brand Identity
+
+Each campaign type gets a distinct layout (`stages/text_compositor.py`), not one panel
+reused everywhere:
+
+- **Menu Items / Deals** — real logo in a header bar, full-bleed hero photo, bottom
+  gradient caption band. Matches the reference campaign emails in `sample_images/`.
+- **Spotlights** — logo badge + headline in a left brand-color panel, atmospheric photo
+  on the right. Matches the one reference layout that actually uses a side panel.
+
+**Real logos, never generated.** The image model is explicitly told to draw no logos,
+text, or signage in every prompt template — a diffusion model has no pixel-exact memory
+of a specific restaurant's mark and would otherwise hallucinate a plausible-looking fake
+that changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`,
+sourced via `scripts/fetch_brand_logo.py`) is pasted onto the image deterministically by
+the Pillow compositor instead, on a white card so it stays legible against any brand color.
+If a restaurant has no logo sourced yet, the compositor degrades to a typed restaurant-name
+badge rather than inventing one.
+
+**Goal/audience-aware prompts.** `campaign_goals` and `campaign_audiences` are mapped
+(`stages/campaign_parser.py`) to explicit composition and tone directives before reaching
+the LLM — e.g. "Increase Item Sales" -> focus tightly on the item as the hero subject;
+"Lost" audience -> reactivation-focused and persuasive — rather than leaving the raw label
+to the model's interpretation.
 
 ---
 
@@ -273,9 +302,11 @@ HuggingFace on first startup. This adds 2-5 minutes to cold start. For productio
 weights into the Docker image or mount a pre-populated cache volume.
 
 **Style variance across campaigns** — Three campaigns for the same restaurant generate
-independently sampled background scenes. A mild brand-hex color grade (8% blend) provides
-a tonal anchor, but images will vary in lighting and photographic style. Production fix:
-img2img conditioning with a canonical hero shot as a style reference.
+independently sampled background scenes. `_apply_brand_tone()` in the compositor blends
+every generated photo 6% toward the restaurant's primary hex before overlays are drawn,
+giving a consistent tonal anchor, but images will still vary in lighting and photographic
+style since each is sampled independently. Production fix: img2img conditioning with a
+canonical hero shot as a style reference.
 
 **R2 vs ARM's existing asset storage** — R2 was chosen for standalone evaluation. If ARM
 has an existing asset storage layer for customer-facing content, confirm whether images should
@@ -291,7 +322,7 @@ be stored there before production deployment.
 | 2 | Payload field mapping | `docs/payload_mapping.md` |
 | 3 | Prompt generator templates | `prompts/*.yaml` |
 | 4 | Campaign type parsers | `stages/campaign_parser.py`, `schemas/campaign_types.py` |
-| 5 | Restaurant ID to brand mapping | `config/restaurant_brands.json` |
+| 5 | Restaurant ID to brand mapping (incl. real logos) | `config/restaurant_brands.json`, `config/logos/` |
 | 6 | Working image generation pipeline | `pipeline/image_pipeline.py` |
 | 7 | 2+ image generation APIs | gpt-image-2 + gpt-image-1.5 + HF FLUX |
 | 8 | Generated prompts for all 6 payloads | `outputs/` after `make batch` |

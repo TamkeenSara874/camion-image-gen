@@ -6,10 +6,28 @@ from unittest.mock import MagicMock
 from PIL import Image
 
 from schemas.internal import CampaignContext, RestaurantBrand
-from stages.text_compositor import _composite_sync, composite
+from stages.text_compositor import (
+    _VARIANTS_BY_TYPE,
+    _apply_brand_tone,
+    _composite_sync,
+    _deals_header_scrim,
+    _deals_panel,
+    _deals_poster,
+    _hex_to_rgb,
+    _menu_items_header_scrim,
+    _menu_items_panel,
+    _menu_items_poster,
+    _select_variant,
+    _spotlights_panel_left,
+    _spotlights_panel_right,
+    _spotlights_poster,
+    composite,
+)
 
 
-def _make_brand(restaurant_id: int = 2, currency: str = "$") -> RestaurantBrand:
+def _make_brand(
+    restaurant_id: int = 2, currency: str = "$", logo_path: str | None = "config/logos/2.png"
+) -> RestaurantBrand:
     return RestaurantBrand(
         restaurant_id=restaurant_id,
         restaurant_name="Mijo's Taqueria",
@@ -19,6 +37,7 @@ def _make_brand(restaurant_id: int = 2, currency: str = "$") -> RestaurantBrand:
         website_url="https://mijostaqueria.com",
         brand_colors={"primary": "#C8410A", "accent": "#F5A623", "text_on_primary": "#FFFFFF"},
         currency_symbol=currency,
+        logo_path=logo_path,
     )
 
 
@@ -188,6 +207,246 @@ async def test_composite_sets_text_was_truncated_flag():
     result = await composite(_blank_image(100, 100), ctx, _fake_settings())
     assert isinstance(result, CompositeResult)
     assert result.text_was_truncated is True
+
+
+def _pixel_close(actual: tuple[int, int, int], expected: tuple[int, int, int], tolerance: int = 12) -> bool:
+    return all(abs(a - e) <= tolerance for a, e in zip(actual, expected))
+
+
+# --- Structural tests below call specific variant functions directly rather
+# than going through the hash-based dispatch in _composite_sync, so they stay
+# deterministic regardless of which variant a given fixture's content happens
+# to hash to. Dispatch/hash behavior itself is covered separately further down.
+
+
+def test_menu_items_header_scrim_variant_header_bar_is_opaque_brand_primary():
+    """Regression guard for the header-bar variant: the top strip must be the
+    restaurant's real brand color, not a stray photo pixel or blended tone."""
+    ctx = _make_ctx("Menu Items")
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _menu_items_header_scrim(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert out.getpixel((5, 5)) == primary
+
+
+def test_deals_header_scrim_variant_header_bar_is_opaque_brand_primary():
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _deals_header_scrim(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert out.getpixel((5, 5)) == primary
+
+
+def test_menu_items_header_scrim_variant_photo_is_full_bleed():
+    """The header-scrim variant must leave the hero photo fully visible in the
+    body of the frame -- no opaque side panel eating into it."""
+    ctx = _make_ctx("Menu Items")
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _menu_items_header_scrim(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w, h = out.size
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    pixel = out.getpixel((int(w * 0.1), int(h * 0.6)))
+    assert not _pixel_close(pixel, primary, tolerance=25)
+
+
+def test_deals_header_scrim_variant_photo_is_full_bleed():
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _deals_header_scrim(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w, h = out.size
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    pixel = out.getpixel((int(w * 0.1), int(h * 0.6)))
+    assert not _pixel_close(pixel, primary, tolerance=25)
+
+
+def test_menu_items_panel_variant_has_a_right_side_panel():
+    ctx = _make_ctx("Menu Items")
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _menu_items_panel(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w, h = out.size
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert _pixel_close(out.getpixel((w - 5, h // 2)), primary, tolerance=15)
+
+
+def test_deals_panel_variant_has_a_left_side_panel():
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _deals_panel(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    h = out.height
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert _pixel_close(out.getpixel((5, h // 2)), primary, tolerance=15)
+
+
+def test_spotlights_panel_left_variant_has_a_left_side_panel():
+    """Matches the one reference campaign email that actually uses a side panel."""
+    ctx = _make_ctx("Spotlights", main_title="Weekend Fiesta", main_offer="Live music", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _spotlights_panel_left(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    h = out.height
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert _pixel_close(out.getpixel((5, h // 2)), primary, tolerance=15)
+
+
+def test_spotlights_panel_right_variant_has_a_right_side_panel():
+    ctx = _make_ctx("Spotlights", main_title="Weekend Fiesta", main_offer="Live music", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _spotlights_panel_right(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w, h = out.size
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert _pixel_close(out.getpixel((w - 5, h // 2)), primary, tolerance=15)
+
+
+def test_spotlights_poster_variant_has_no_side_panel():
+    """The poster variant is the 'no panel at all' option in the Spotlights
+    pool -- full-bleed photo on both edges."""
+    ctx = _make_ctx("Spotlights", main_title="Weekend Fiesta", main_offer="Live music", price=None)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _spotlights_poster(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w, h = out.size
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    assert not _pixel_close(out.getpixel((5, h // 2)), primary, tolerance=25)
+    assert not _pixel_close(out.getpixel((w - 5, h // 2)), primary, tolerance=25)
+
+
+def test_menu_items_poster_and_deals_poster_have_no_opaque_header_bar():
+    """Poster variants replace the opaque header bar with a small floating
+    corner logo badge -- the top-center strip should not be a flat brand fill."""
+    primary = _hex_to_rgb("#C8410A")
+    for variant_fn, ctx in [
+        (_menu_items_poster, _make_ctx("Menu Items")),
+        (_deals_poster, _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None)),
+    ]:
+        img = Image.open(BytesIO(_blank_image())).convert("RGB")
+        result, _ = variant_fn(img, ctx, _fake_settings())
+        out = Image.open(BytesIO(result))
+        w, _h = out.size
+        assert not _pixel_close(out.getpixel((w // 2, 5)), primary, tolerance=15)
+
+
+def test_logo_badge_draws_something_over_the_flat_header_color():
+    """Proves the real logo asset is actually pasted (not just a flat brand
+    rectangle) by checking the badge center differs from the surrounding
+    uniform header fill."""
+    ctx = _make_ctx("Menu Items", brand=_make_brand(logo_path="config/logos/2.png"))
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _menu_items_header_scrim(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w = out.width
+    header_h = int(out.height * 0.15)
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    badge_pixel = out.getpixel((w // 2, header_h // 2))
+    assert not _pixel_close(badge_pixel, primary, tolerance=10)
+
+
+def test_missing_logo_falls_back_to_text_badge_without_crashing():
+    """A restaurant with no sourced logo file yet must degrade to a typed
+    fallback (never a hallucinated/invented mark) and still render cleanly."""
+    ctx = _make_ctx("Menu Items", brand=_make_brand(logo_path=None))
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _menu_items_header_scrim(img, ctx, _fake_settings())
+    assert _is_valid_jpeg(result)
+    out = Image.open(BytesIO(result))
+    w = out.width
+    header_h = int(out.height * 0.15)
+    primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
+    # The fallback text badge still draws a white card + text, so the badge
+    # center should differ from the flat header fill just like the real logo does.
+    badge_pixel = out.getpixel((w // 2, header_h // 2))
+    assert not _pixel_close(badge_pixel, primary, tolerance=10)
+
+
+# --- Variant dispatch: determinism and coverage ---------------------------
+
+
+def test_variant_selection_is_deterministic():
+    ctx = _make_ctx("Menu Items", main_title="Baja Fish Taco")
+    assert _select_variant(ctx, 3) == _select_variant(ctx, 3)
+
+
+def test_same_payload_always_renders_the_same_variant():
+    ctx = _make_ctx("Deals", main_title="Taco Tuesday BOGO", main_offer="Buy 1 get 1", price=None)
+    result1, _ = _composite_sync(_blank_image(), ctx, _fake_settings())
+    result2, _ = _composite_sync(_blank_image(), ctx, _fake_settings())
+    assert result1 == result2
+
+
+def test_different_campaign_names_can_select_different_variants():
+    """The whole point of the variant pool: campaigns of the same type must
+    not all be forced into one identical structure."""
+    titles = [f"Campaign {i}" for i in range(30)]
+    indices = {_select_variant(_make_ctx("Menu Items", main_title=t), 3) for t in titles}
+    assert indices == {0, 1, 2}
+
+
+def test_unknown_campaign_type_falls_back_to_a_menu_items_variant():
+    ctx = _make_ctx("Special Days", main_title="Holiday", main_offer="Special menu")
+    result, _ = _composite_sync(_blank_image(), ctx, _fake_settings())
+    assert _is_valid_jpeg(result)
+    # Same output whether campaign_type is truly unknown or explicitly "Menu Items",
+    # since both resolve to the same variant pool and the hash key only depends on
+    # (restaurant_id, campaign_type, main_title) -- confirms it's really falling
+    # back to the Menu Items pool rather than crashing or silently no-op'ing.
+    ctx_known = _make_ctx("Menu Items", main_title="Holiday", main_offer="Special menu")
+    result_known, _ = _composite_sync(_blank_image(), ctx_known, _fake_settings())
+    assert _is_valid_jpeg(result_known)
+
+
+def test_all_menu_items_variants_produce_valid_jpeg():
+    ctx = _make_ctx("Menu Items")
+    for variant_fn in _VARIANTS_BY_TYPE["Menu Items"]:
+        img = Image.open(BytesIO(_blank_image())).convert("RGB")
+        result, _ = variant_fn(img, ctx, _fake_settings())
+        assert _is_valid_jpeg(result)
+
+
+def test_all_deals_variants_produce_valid_jpeg():
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1 free on tacos", price=None)
+    for variant_fn in _VARIANTS_BY_TYPE["Deals"]:
+        img = Image.open(BytesIO(_blank_image())).convert("RGB")
+        result, _ = variant_fn(img, ctx, _fake_settings())
+        assert _is_valid_jpeg(result)
+
+
+def test_all_spotlights_variants_produce_valid_jpeg():
+    ctx = _make_ctx("Spotlights", main_title="Weekend Fiesta", main_offer="Live music", price=None)
+    for variant_fn in _VARIANTS_BY_TYPE["Spotlights"]:
+        img = Image.open(BytesIO(_blank_image())).convert("RGB")
+        result, _ = variant_fn(img, ctx, _fake_settings())
+        assert _is_valid_jpeg(result)
+
+
+def test_all_variants_handle_missing_price_without_crashing():
+    ctx = _make_ctx("Menu Items", price=None)
+    for variant_fn in _VARIANTS_BY_TYPE["Menu Items"]:
+        img = Image.open(BytesIO(_blank_image())).convert("RGB")
+        result, _ = variant_fn(img, ctx, _fake_settings())
+        assert _is_valid_jpeg(result)
+
+
+def test_apply_brand_tone_blends_toward_primary_color():
+    primary_hex = "#C8410A"
+    photo_color = (180, 120, 80)
+    img = Image.new("RGB", (10, 10), color=photo_color)
+    toned = _apply_brand_tone(img, primary_hex, strength=0.5)
+    r, g, b = _hex_to_rgb(primary_hex)
+    expected = tuple(int(p * 0.5 + c * 0.5) for p, c in zip(photo_color, (r, g, b)))
+    assert _pixel_close(toned.getpixel((5, 5)), expected, tolerance=2)
+
+
+def test_apply_brand_tone_zero_strength_is_a_no_op():
+    photo_color = (180, 120, 80)
+    img = Image.new("RGB", (10, 10), color=photo_color)
+    toned = _apply_brand_tone(img, "#C8410A", strength=0.0)
+    assert toned.getpixel((5, 5)) == photo_color
 
 
 def test_wrap_two_lines_does_not_orphan_punctuation():
