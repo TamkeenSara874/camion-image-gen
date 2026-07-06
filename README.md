@@ -7,24 +7,45 @@ seven-stage AI pipeline. Built as a FastAPI service with a Streamlit frontend.
 
 ## Architecture
 
-```
-POST /api/generate-image
-        |
-Stage 1  Validator          Registry-based schema check per campaign type
-Stage 2  Brand Mapper       restaurantId -> brand colors, theme, visual style
-Stage 3  Campaign Parser    Sanitize inputs, build CampaignContext
-Stage 4  Prompt Generator   gpt-4o-mini -> background scene description (goal/audience-aware)
-Stage 5  Image Synthesizer  gpt-image-2 (3 fallbacks including free HF FLUX)
-Stage 6  Text Compositor    Pillow: real logo + header/panel + name, price, CTA pill
-Stage 7  QA Validator       CLIP + OCR + gpt-4.1-mini vision scoring
-        |
-        v
-R2 upload -> ImageGenerationResponse (URL, metrics, QA scores)
+```mermaid
+flowchart TD
+    UI["Streamlit Frontend<br/>(frontend/app.py)"] -->|"POST /api/generate-image<br/>Bearer token"| API["FastAPI Backend<br/>(main.py)"]
+    CURL["curl / any HTTP client"] --> API
+
+    API --> S1
+
+    subgraph PIPE["pipeline/image_pipeline.py"]
+        direction TB
+        S1["Stage 1 &middot; Validator<br/>registry-based schema check per campaign_type"]
+        S2["Stage 2 &middot; Brand Mapper<br/>restaurantId -> RestaurantBrand<br/>(colors, theme, real logo path)"]
+        S3["Stage 3 &middot; Campaign Parser<br/>sanitize input, allergen filter,<br/>goal/audience -> visual-direction mapping"]
+        S4["Stage 4 &middot; Prompt Generator<br/>gpt-4o-mini -> background scene prompt"]
+        S5["Stage 5 &middot; Image Synthesizer<br/>gpt-image-2 -> gpt-image-1.5 -> gpt-image-1-mini -> HF FLUX"]
+        S6["Stage 6 &middot; Text Compositor<br/>Pillow: real logo + 1-of-3 layout variants<br/>(picked deterministically per campaign type)"]
+        S7["Stage 7 &middot; QA Validator<br/>CLIP + OCR + gpt-4.1-mini vision"]
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6
+        S6 -.parallel.-> CLIPOCR["CLIP score + OCR allergen check"]
+        CLIPOCR --> S7
+        S6 --> R2U["Upload to R2"]
+        R2U -.parallel.-> S7
+        S7 -->|"qa_passed=false,<br/>retries remain"| RETRY{"Retry category?"}
+        RETRY -->|"synthesis/both"| S4
+        RETRY -->|"compositor only"| S6
+    end
+
+    S7 --> RESP["ImageGenerationResponse<br/>(image_url, metrics, qa_scores)<br/>returned to caller"]
+    R2U --> RESP
+
+    OPENAI[("OpenAI API")] -.-> S4
+    OPENAI -.-> S5
+    OPENAI -.-> S7
+    HF[("HuggingFace<br/>FLUX.1-schnell")] -.-> S5
+    R2[("Cloudflare R2")] -.-> R2U
 ```
 
 Parallelism baked in: Stage 6 and CLIP+OCR run simultaneously; R2 upload and vision QA
-run simultaneously. Retry routing distinguishes synthesis failures (re-run Stage 5) from
-compositor failures (re-run Stage 6 only).
+run simultaneously. Retry routing distinguishes synthesis failures (re-run Stage 4+5+6) from
+compositor-only failures (re-run Stage 6 only, no new image generation charge).
 
 ---
 
@@ -151,7 +172,7 @@ python run_batch.py --prompts-only
 pytest tests/ -v
 ```
 
-170 tests. Integration tests mock all external calls (OpenAI, R2).
+183 tests. Integration tests mock all external calls (OpenAI, R2).
 
 ---
 
@@ -248,13 +269,21 @@ See `docs/brand_notes.md` for the full walkthrough.
 
 ## Campaign Layouts & Brand Identity
 
-Each campaign type gets a distinct layout (`stages/text_compositor.py`), not one panel
-reused everywhere:
+Every campaign type has **3 distinct layout variants** (`stages/text_compositor.py`), not
+one template reused for every campaign. Which variant a given campaign renders with is
+picked deterministically by hashing `(restaurantId, campaign_type, campaign_name)` --
+the same payload always renders identically (cacheable, testable, reproducible for QA
+review), but two different campaigns of the same type land on different structures instead
+of all looking like clones of each other:
 
-- **Menu Items / Deals** — real logo in a header bar, full-bleed hero photo, bottom
-  gradient caption band. Matches the reference campaign emails in `sample_images/`.
-- **Spotlights** — logo badge + headline in a left brand-color panel, atmospheric photo
-  on the right. Matches the one reference layout that actually uses a side panel.
+| Campaign type | Variant 0 | Variant 1 | Variant 2 |
+|---|---|---|---|
+| **Menu Items** | Header bar + full-bleed photo + bottom gradient caption (name, price) | Corner logo badge, no header bar; centered name; price as a floating accent-color tag | Right-side brand-color panel: logo, name, price, description |
+| **Deals** | Header bar + full-bleed photo + bottom gradient band with large offer callout | Corner logo badge; offer rendered as a huge centered stamp-style callout | Left-side brand-color panel: logo, deal name, offer |
+| **Spotlights** | Left-side brand-color panel: logo badge, headline, offer | Mirrored right-side panel | Corner logo badge, full-bleed atmospheric photo, centered poster-style headline |
+
+An unrecognized `campaign_type` falls back to the Menu Items variant pool rather than
+crashing (`_VARIANTS_BY_TYPE.get(ctx.campaign_type, _VARIANTS_BY_TYPE["Menu Items"])`).
 
 **Real logos, never generated.** The image model is explicitly told to draw no logos,
 text, or signage in every prompt template — a diffusion model has no pixel-exact memory
@@ -269,7 +298,9 @@ badge rather than inventing one.
 (`stages/campaign_parser.py`) to explicit composition and tone directives before reaching
 the LLM — e.g. "Increase Item Sales" -> focus tightly on the item as the hero subject;
 "Lost" audience -> reactivation-focused and persuasive — rather than leaving the raw label
-to the model's interpretation.
+to the model's interpretation. The Streamlit frontend exposes this as a "Campaign goal"
+dropdown (defaulting per campaign type, e.g. Deals defaults to "Increase Deal Sales") with
+a live caption showing the resulting visual direction.
 
 ---
 
