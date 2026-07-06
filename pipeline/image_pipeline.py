@@ -23,7 +23,7 @@ from schemas.request import CampaignPayload
 from schemas.response import ImageGenerationResponse, ResponseMetrics, StageBreakdown
 from services.cost_table import estimate_image_cost, estimate_token_cost
 from services.storage import upload_image
-from stages.brand_mapper import map_brand
+from stages.brand_mapper import ensure_logo, map_brand
 from stages.campaign_parser import parse
 from stages.image_synthesizer import synthesize
 from stages.prompt_generator import generate_prompt
@@ -151,6 +151,15 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     brand = map_brand(payload.restaurantId)
     metrics.stages.append(StageMetrics("brand_mapper", None, int((time.perf_counter() - t0) * 1000)))
 
+    # Kick off logo resolution now, in the background. Only Stage 6 (compositor)
+    # needs it, and Stage 4 (prompt) + Stage 5 (image synthesis) below take
+    # 15-90s combined versus ~1-2s for a logo fetch, so awaiting this right
+    # before Stage 6 needs it adds ~zero wall-clock latency in the common case.
+    # ensure_logo() mutates `brand` in place, and ctx.restaurant (set in Stage 3
+    # below) holds a reference to this same object, so no reassignment is needed.
+    t0_logo = time.perf_counter()
+    logo_task = asyncio.create_task(ensure_logo(brand))
+
     # Stage 3
     t0 = time.perf_counter()
     ctx = parse(payload, brand)
@@ -178,6 +187,11 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     need_synthesis = True
     run_vision = True
     last_failure_category: _FailureCategory | None = None
+
+    # Only blocks if the fetch (kicked off right after Stage 2) is somehow
+    # still running -- normally a no-op since Stage 4 above already took longer.
+    await logo_task
+    metrics.stages.append(StageMetrics("logo_fetch", None, int((time.perf_counter() - t0_logo) * 1000)))
 
     while True:
         if qa_retries > 0 and need_synthesis:

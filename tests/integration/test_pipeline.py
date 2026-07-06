@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
@@ -164,6 +165,62 @@ class TestHappyPath:
         assert response.orientation_preserved is False
         assert response.model_used == "FLUX.1-schnell"
         assert response.attempt_number == 5
+
+
+class TestLogoFetchConcurrency:
+    async def test_logo_fetch_overlaps_prompt_and_synthesis_not_serial(self, menu_payload, settings):
+        """ensure_logo() is kicked off right after Stage 2 and only awaited
+        right before Stage 6 needs it. If it actually ran concurrently with
+        Stage 4 (prompt) + Stage 5 (synthesis) rather than before/after them,
+        total wall-clock time should track the slower of the two paths, not
+        their sum."""
+        import time
+
+        from schemas.internal import RestaurantBrand
+
+        brand_no_logo = RestaurantBrand(
+            restaurant_id=2, restaurant_name="Mijo's Taqueria", cuisine_type="Mexican",
+            brand_theme="x", visual_style="x", website_url="https://mijostaqueria.com",
+            brand_colors={"primary": "#4D6D22", "accent": "#DCCEC4", "text_on_primary": "#FFFFFF"},
+            logo_path=None,
+        )
+
+        def slow_fetch_logo_url(url):
+            time.sleep(0.12)
+            return "https://mijostaqueria.com/logo.png", "og_image_or_favicon"
+
+        def slow_download_logo(url, restaurant_id):
+            time.sleep(0.05)
+            return "/fake/2.png"
+
+        async def slow_prompt(*args, **kwargs):
+            await asyncio.sleep(0.12)
+            return FAKE_PROMPT
+
+        async def slow_synthesis(*args, **kwargs):
+            await asyncio.sleep(0.12)
+            return FAKE_SYNTHESIS
+
+        with (
+            patch("pipeline.image_pipeline.map_brand", return_value=brand_no_logo),
+            patch("stages.brand_mapper.fetch_logo_url", side_effect=slow_fetch_logo_url),
+            patch("stages.brand_mapper.download_logo", side_effect=slow_download_logo),
+            patch("pipeline.image_pipeline.generate_prompt", AsyncMock(side_effect=slow_prompt)),
+            patch("pipeline.image_pipeline.synthesize", AsyncMock(side_effect=slow_synthesis)),
+            patch("pipeline.image_pipeline.composite", _as_async_mock(FAKE_COMPOSITE)),
+            patch("pipeline.image_pipeline.upload_image", AsyncMock(return_value=FAKE_URL)),
+            patch("pipeline.image_pipeline._vision_check_async", _as_async_mock((False, 5, 5, []))),
+            patch("pipeline.image_pipeline._clip_check_async", AsyncMock(return_value=0.28)),
+            patch("pipeline.image_pipeline._ocr_check_async", AsyncMock(return_value=(True, []))),
+        ):
+            start = time.perf_counter()
+            response = await run(menu_payload, settings)
+            elapsed = time.perf_counter() - start
+
+        # Serial would be >= 0.12 (logo) + 0.05 (download) + 0.12 (prompt) + 0.12 (synth) = 0.41s.
+        # Concurrent should track ~0.12+0.12=0.24s (prompt+synthesis, the longer path) plus overhead.
+        assert elapsed < 0.35, f"expected overlap, took {elapsed:.3f}s (serial would be ~0.41s+)"
+        assert response.image_url == FAKE_URL
 
 
 class TestCaching:

@@ -18,12 +18,16 @@ flowchart TD
         direction TB
         S1["Stage 1 &middot; Validator<br/>registry-based schema check per campaign_type"]
         S2["Stage 2 &middot; Brand Mapper<br/>restaurantId -> RestaurantBrand<br/>(colors, theme, real logo path)"]
+        LOGO["Logo Auto-Fetch (background task)<br/>ensure_logo(): scrapes once + caches to<br/>config/logos/, only if not already cached"]
         S3["Stage 3 &middot; Campaign Parser<br/>sanitize input, allergen filter,<br/>goal/audience -> visual-direction mapping"]
         S4["Stage 4 &middot; Prompt Generator<br/>gpt-4o-mini -> background scene prompt"]
         S5["Stage 5 &middot; Image Synthesizer<br/>gpt-image-2 -> gpt-image-1.5 -> gpt-image-1-mini -> HF FLUX"]
         S6["Stage 6 &middot; Text Compositor<br/>Pillow: real logo + 1-of-3 layout variants<br/>(picked deterministically per campaign type)"]
         S7["Stage 7 &middot; QA Validator<br/>CLIP + OCR + gpt-4.1-mini vision"]
-        S1 --> S2 --> S3 --> S4 --> S5 --> S6
+        S1 --> S2
+        S2 -.kicked off, awaited later.-> LOGO
+        S2 --> S3 --> S4 --> S5 --> S6
+        LOGO -.joins before.-> S6
         S6 -.parallel.-> CLIPOCR["CLIP score + OCR allergen check"]
         CLIPOCR --> S7
         S6 --> R2U["Upload to R2"]
@@ -41,11 +45,13 @@ flowchart TD
     OPENAI -.-> S7
     HF[("HuggingFace<br/>FLUX.1-schnell")] -.-> S5
     R2[("Cloudflare R2")] -.-> R2U
+    SITE[("Restaurant's own website")] -.-> LOGO
 ```
 
-Parallelism baked in: Stage 6 and CLIP+OCR run simultaneously; R2 upload and vision QA
-run simultaneously. Retry routing distinguishes synthesis failures (re-run Stage 4+5+6) from
-compositor-only failures (re-run Stage 6 only, no new image generation charge).
+Parallelism baked in: the logo fetch (when needed at all) runs concurrently with Stage 3+4+5,
+Stage 6 and CLIP+OCR run simultaneously, and R2 upload and vision QA run simultaneously.
+Retry routing distinguishes synthesis failures (re-run Stage 4+5+6) from compositor-only
+failures (re-run Stage 6 only, no new image generation charge).
 
 ---
 
@@ -172,7 +178,9 @@ python run_batch.py --prompts-only
 pytest tests/ -v
 ```
 
-183 tests. Integration tests mock all external calls (OpenAI, R2).
+191 tests, including one that measures wall-clock time to prove the logo fetch actually
+overlaps Stage 4+5 rather than running serially before them. Integration tests mock all
+external calls (OpenAI, R2).
 
 ---
 
@@ -261,8 +269,11 @@ YAML template to `prompts/`. No pipeline code changes required.
 | 2 | Mijo's Taqueria | Vibrant, festive Mexican |
 | 4 | Flights Restaurant | Sophisticated, wine-forward American |
 
-Adding a new restaurant: add a JSON object to `config/restaurant_brands.json`, run
-`scripts/extract_brand_colors.py` and `scripts/fetch_brand_logo.py`. No code changes.
+Adding a new restaurant: add a JSON object to `config/restaurant_brands.json` with at
+least `website_url` set. The logo is fetched automatically the first time that restaurant
+is requested (see "Automatic logo fetching" below) — running `scripts/fetch_brand_logo.py`
+by hand is optional, only useful for pre-warming the cache. `scripts/extract_brand_colors.py`
+for the color palette is still a manual step. No code changes either way.
 See `docs/brand_notes.md` for the full walkthrough.
 
 ---
@@ -288,11 +299,23 @@ crashing (`_VARIANTS_BY_TYPE.get(ctx.campaign_type, _VARIANTS_BY_TYPE["Menu Item
 **Real logos, never generated.** The image model is explicitly told to draw no logos,
 text, or signage in every prompt template — a diffusion model has no pixel-exact memory
 of a specific restaurant's mark and would otherwise hallucinate a plausible-looking fake
-that changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`,
-sourced via `scripts/fetch_brand_logo.py`) is pasted onto the image deterministically by
-the Pillow compositor instead, on a white card so it stays legible against any brand color.
-If a restaurant has no logo sourced yet, the compositor degrades to a typed restaurant-name
-badge rather than inventing one.
+that changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`)
+is pasted onto the image deterministically by the Pillow compositor instead, on a white
+card so it stays legible against any brand color. If a restaurant has no logo cached yet
+and the auto-fetch below hasn't resolved one, the compositor degrades to a typed
+restaurant-name badge rather than inventing one.
+
+**Automatic logo fetching, run in parallel.** `stages/brand_mapper.py::ensure_logo()`
+checks whether `config/logos/{restaurantId}.png` already exists; if not, it scrapes the
+restaurant's real logo from `website_url` (`services/logo_fetcher.py` — the same logic
+`scripts/fetch_brand_logo.py` uses manually) and caches it to disk. The pipeline kicks
+this off with `asyncio.create_task()` right after Stage 2 and only `await`s it immediately
+before Stage 6 needs it — since Stage 4 (prompt) + Stage 5 (image synthesis) in between
+take 15–90s versus ~1–2s for a logo fetch, this adds effectively zero latency the first
+time a restaurant is seen, and zero work at all on every request after (the file is just
+there). A failed fetch never blocks the request — it leaves `logo_path=None` and degrades
+to the typed-name badge above, with a 5-minute cooldown before retrying so a broken
+restaurant site doesn't get re-scraped on every subsequent request.
 
 **Goal/audience-aware prompts.** `campaign_goals` and `campaign_audiences` are mapped
 (`stages/campaign_parser.py`) to explicit composition and tone directives before reaching
@@ -331,6 +354,14 @@ The same limitation applies to the per-restaurant daily image counter.
 **CLIP weights download at startup** — ViT-B/32 weights (~350 MB) are downloaded from
 HuggingFace on first startup. This adds 2-5 minutes to cold start. For production, bake the
 weights into the Docker image or mount a pre-populated cache volume.
+
+**Auto-fetched logo cache is local disk, same limitation class as the payload cache** —
+`config/logos/{id}.png` is written to the local filesystem the first time a restaurant is
+seen. On a single instance that's a permanent cache after the first request. Across multiple
+replicas or an ephemeral filesystem (serverless, some container platforms), each instance
+would re-fetch independently and nothing is shared between them — not incorrect, just a
+wasted fetch per instance instead of one fetch total. A shared volume or object storage
+(the same fix as the payload cache/Redis note above) closes this if it matters at your scale.
 
 **Style variance across campaigns** — Three campaigns for the same restaurant generate
 independently sampled background scenes. `_apply_brand_tone()` in the compositor blends
