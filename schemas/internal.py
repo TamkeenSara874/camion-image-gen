@@ -15,6 +15,7 @@ class RestaurantBrand:
     brand_colors: dict[str, str]
     currency_symbol: str = "$"
     logo_path: str | None = None
+    style_profile: str = "festive_organic"
 
 
 @dataclass
@@ -37,6 +38,7 @@ class CampaignContext:
     extra_vars: dict[str, Any] = field(default_factory=dict)
     goal_direction: str = ""
     audience_tone: str = ""
+    occasion_mood: str = ""
 
 
 @dataclass

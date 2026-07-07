@@ -18,6 +18,7 @@ user: |
   Where this deal is redeemable: {platforms}
   Campaign goal: {campaign_goal} -- visual direction: {goal_direction}
   Target audience: {audience} -- tone: {audience_tone}
+  {occasion_mood_block}
   Brand voice: {brand_voice}
   Image format: {aspect_ratio} ({image_size})
   Color palette: primary {primary_hex}, accent {accent_hex}

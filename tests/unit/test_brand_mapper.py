@@ -28,6 +28,36 @@ def test_flights_brand_maps_correctly():
     assert brand.restaurant_id == 4
 
 
+def test_mijos_and_flights_have_distinct_explicit_style_profiles():
+    assert map_brand(2).style_profile == "festive_organic"
+    assert map_brand(4).style_profile == "refined_minimal"
+
+
+def test_missing_style_profile_key_defaults_to_festive_organic(tmp_path, monkeypatch):
+    brands_data = {
+        "102": {
+            "restaurant_name": "NoStyleYet",
+            "cuisine_type": "Fusion",
+            "brand_theme": "modern",
+            "visual_style": "clean",
+            "website_url": "https://nostyleyet.example.com",
+            "brand_colors": {"primary": "#111111", "accent": "#EEEEEE", "text_on_primary": "#FFFFFF"},
+        }
+    }
+    brands_file = tmp_path / "restaurant_brands.json"
+    brands_file.write_text(json.dumps(brands_data))
+
+    import stages.brand_mapper as bm
+
+    monkeypatch.setattr(bm, "BRANDS_PATH", str(brands_file))
+    bm._load_brands.cache_clear()
+
+    brand = bm.map_brand(102)
+    assert brand.style_profile == "festive_organic"
+
+    bm._load_brands.cache_clear()
+
+
 def test_unknown_restaurant_raises():
     with pytest.raises(ValueError, match="restaurantId 999 not found"):
         map_brand(999)

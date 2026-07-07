@@ -3,16 +3,19 @@ from __future__ import annotations
 from io import BytesIO
 from unittest.mock import MagicMock
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from schemas.internal import CampaignContext, RestaurantBrand
 from stages.text_compositor import (
+    _STYLE_PRESETS,
     _VARIANTS_BY_TYPE,
     _apply_brand_tone,
     _composite_sync,
     _deals_header_scrim,
     _deals_panel,
     _deals_poster,
+    _draw_cta_pill,
+    _draw_logo_badge,
     _hex_to_rgb,
     _menu_items_header_scrim,
     _menu_items_panel,
@@ -21,12 +24,16 @@ from stages.text_compositor import (
     _spotlights_panel_left,
     _spotlights_panel_right,
     _spotlights_poster,
+    _style_for,
     composite,
 )
 
 
 def _make_brand(
-    restaurant_id: int = 2, currency: str = "$", logo_path: str | None = "config/logos/2.png"
+    restaurant_id: int = 2,
+    currency: str = "$",
+    logo_path: str | None = "config/logos/2.png",
+    style_profile: str = "festive_organic",
 ) -> RestaurantBrand:
     return RestaurantBrand(
         restaurant_id=restaurant_id,
@@ -38,6 +45,7 @@ def _make_brand(
         brand_colors={"primary": "#C8410A", "accent": "#F5A623", "text_on_primary": "#FFFFFF"},
         currency_symbol=currency,
         logo_path=logo_path,
+        style_profile=style_profile,
     )
 
 
@@ -219,24 +227,33 @@ def _pixel_close(actual: tuple[int, int, int], expected: tuple[int, int, int], t
 # to hash to. Dispatch/hash behavior itself is covered separately further down.
 
 
-def test_menu_items_header_scrim_variant_header_bar_is_opaque_brand_primary():
-    """Regression guard for the header-bar variant: the top strip must be the
-    restaurant's real brand color, not a stray photo pixel or blended tone."""
+def _blend(fg: tuple[int, int, int], bg: tuple[int, int, int], alpha: int) -> tuple[int, int, int]:
+    a = alpha / 255
+    return tuple(round(f * a + b * (1 - a)) for f, b in zip(fg, bg))
+
+
+def test_menu_items_header_scrim_variant_header_bar_is_brand_tinted():
+    """Regression guard for the header-bar variant: the top strip must be a
+    translucent wash of the restaurant's real brand color (deliberately not
+    fully opaque -- see _fading_header_band -- so the photo stays visible
+    through it), not a stray photo pixel or an unrelated tone."""
     ctx = _make_ctx("Menu Items")
     img = Image.open(BytesIO(_blank_image())).convert("RGB")
     result, _ = _menu_items_header_scrim(img, ctx, _fake_settings())
     out = Image.open(BytesIO(result))
     primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
-    assert out.getpixel((5, 5)) == primary
+    expected = _blend(primary, (180, 120, 80), alpha=205)
+    assert _pixel_close(out.getpixel((5, 5)), expected, tolerance=3)
 
 
-def test_deals_header_scrim_variant_header_bar_is_opaque_brand_primary():
+def test_deals_header_scrim_variant_header_bar_is_brand_tinted():
     ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None)
     img = Image.open(BytesIO(_blank_image())).convert("RGB")
     result, _ = _deals_header_scrim(img, ctx, _fake_settings())
     out = Image.open(BytesIO(result))
     primary = _hex_to_rgb(ctx.restaurant.brand_colors["primary"])
-    assert out.getpixel((5, 5)) == primary
+    expected = _blend(primary, (180, 120, 80), alpha=205)
+    assert _pixel_close(out.getpixel((5, 5)), expected, tolerance=3)
 
 
 def test_menu_items_header_scrim_variant_photo_is_full_bleed():
@@ -468,3 +485,138 @@ def test_wrap_two_lines_does_not_orphan_punctuation():
     assert not line2 or line2[0] not in ",.;:"
     # No words lost or duplicated across the split.
     assert f"{line1} {line2}".split() == text.split()
+
+
+# --- Style profiles: restaurant "personality" beyond the two brand hex codes ----
+
+
+def test_style_for_returns_matching_preset_for_known_profiles():
+    festive_ctx = _make_ctx(brand=_make_brand(style_profile="festive_organic"))
+    minimal_ctx = _make_ctx(brand=_make_brand(style_profile="refined_minimal"))
+    assert _style_for(festive_ctx) is _STYLE_PRESETS["festive_organic"]
+    assert _style_for(minimal_ctx) is _STYLE_PRESETS["refined_minimal"]
+
+
+def test_style_for_falls_back_to_default_for_unknown_profile():
+    ctx = _make_ctx(brand=_make_brand(style_profile="some_future_profile"))
+    assert _style_for(ctx) is _STYLE_PRESETS["festive_organic"]
+
+
+def test_festive_and_minimal_presets_use_different_display_fonts():
+    assert _STYLE_PRESETS["festive_organic"].display_font != _STYLE_PRESETS["refined_minimal"].display_font
+
+
+def test_logo_badge_draws_no_backing_box_around_a_real_logo(tmp_path):
+    """The badge must not paint any card/rectangle behind a real logo -- only
+    the logo's own pixels and its silhouette shadow should touch the canvas,
+    so it reads as just a logo, not 'a logo in a box.'"""
+    bg = (200, 200, 200)
+    img = Image.new("RGB", (400, 200), bg).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    style = _STYLE_PRESETS["festive_organic"]
+    logo_path = str(tmp_path / "logo.png")
+    Image.new("RGBA", (40, 40), (255, 0, 0, 255)).save(logo_path)
+    _draw_logo_badge(
+        img, draw, logo_path, "AB",
+        center_x=200, center_y=100, max_card_h=80, max_card_w=200,
+        style=style,
+    )
+    # Well outside the logo's placed footprint (80x80, centered) and past its
+    # shadow's offset/blur reach -- must be untouched background, not a fill.
+    assert img.getpixel((280, 100))[:3] == bg
+
+
+def test_logo_badge_shadow_follows_logo_silhouette_not_a_rectangle(tmp_path):
+    """The shadow must trace the logo's own alpha shape rather than a
+    rectangular card -- proven with a circular logo: a point just past its
+    round bottom edge (where a bounding-box rectangle's edge would already
+    be, but the circle's own silhouette isn't) still shows the shadow."""
+    bg = (200, 200, 200)
+    img = Image.new("RGB", (400, 200), bg).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    style = _STYLE_PRESETS["festive_organic"]
+    logo_path = str(tmp_path / "circle.png")
+    circle = Image.new("RGBA", (80, 80), (0, 0, 0, 0))
+    ImageDraw.Draw(circle).ellipse((0, 0, 79, 79), fill=(255, 0, 0, 255))
+    circle.save(logo_path)
+    _draw_logo_badge(
+        img, draw, logo_path, "AB",
+        center_x=200, center_y=100, max_card_h=80, max_card_w=80,
+        style=style,
+    )
+    # Directly below the circle's own bottom edge (y=140), inside the
+    # shadow's offset+blur reach.
+    shadow_pixel = img.getpixel((200, 144))
+    assert shadow_pixel[:3] != bg
+    assert sum(shadow_pixel[:3]) < sum(bg)
+
+
+def test_missing_logo_fallback_text_has_no_backing_box():
+    """The typed-name fallback must not paint a card either -- just the
+    shadowed text directly on the photo, consistent with the real-logo path."""
+    bg = (200, 200, 200)
+    img = Image.new("RGB", (400, 200), bg).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    style = _STYLE_PRESETS["festive_organic"]
+    _draw_logo_badge(
+        img, draw, None, "AB",
+        center_x=200, center_y=100, max_card_h=80, max_card_w=200,
+        style=style,
+    )
+    # Far from the short "AB" glyphs' actual footprint -- must be untouched.
+    assert img.getpixel((80, 100))[:3] == bg
+
+
+def test_hairline_accent_drawn_at_panel_seam_for_refined_minimal():
+    brand = _make_brand(style_profile="refined_minimal")
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None, brand=brand)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _deals_panel(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w = out.width
+    panel_w = int(w * 0.36)
+    accent = _hex_to_rgb(brand.brand_colors["accent"])
+    seam_pixel = out.getpixel((panel_w, out.height // 2))
+    assert _pixel_close(seam_pixel, accent, tolerance=20)
+
+
+def test_no_hairline_seam_for_festive_organic():
+    brand = _make_brand(style_profile="festive_organic")
+    ctx = _make_ctx("Deals", main_title="BOGO", main_offer="Buy 1 get 1", price=None, brand=brand)
+    img = Image.open(BytesIO(_blank_image())).convert("RGB")
+    result, _ = _deals_panel(img, ctx, _fake_settings())
+    out = Image.open(BytesIO(result))
+    w = out.width
+    panel_w = int(w * 0.36)
+    accent = _hex_to_rgb(brand.brand_colors["accent"])
+    seam_pixel = out.getpixel((panel_w, out.height // 2))
+    assert not _pixel_close(seam_pixel, accent, tolerance=20)
+
+
+def test_cta_pill_is_boxier_for_refined_minimal_than_festive_organic():
+    """roundness drives the pill's corner radius -- refined_minimal's low
+    roundness should leave its extreme corner filled (square-ish), while
+    festive_organic's high roundness carves that same corner away. The
+    pill's bottom-right tip is (w - margin, h - margin) regardless of the
+    CTA text's width, so this is exact rather than an estimate."""
+    w, h = 1536, 1024
+    accent = _hex_to_rgb("#F5A623")
+    # 4px in from the true tip: inside festive_organic's large-radius arc
+    # (cut away -> background) but past refined_minimal's small-radius arc
+    # (plain rectangle fill applies).
+    corner = (w - int(w * 0.03) - 4, h - int(h * 0.03) - 4)
+
+    organic_ctx = _make_ctx("Menu Items", cta=True, brand=_make_brand(style_profile="festive_organic"))
+    img = Image.new("RGB", (w, h), (10, 10, 10))
+    draw = ImageDraw.Draw(img)
+    _draw_cta_pill(draw, w, h, organic_ctx, _fake_settings(cta_enabled=True))
+    organic_corner = img.getpixel(corner)
+
+    minimal_ctx = _make_ctx("Menu Items", cta=True, brand=_make_brand(style_profile="refined_minimal"))
+    img2 = Image.new("RGB", (w, h), (10, 10, 10))
+    draw2 = ImageDraw.Draw(img2)
+    _draw_cta_pill(draw2, w, h, minimal_ctx, _fake_settings(cta_enabled=True))
+    minimal_corner = img2.getpixel(corner)
+
+    assert not _pixel_close(organic_corner, accent, tolerance=20)
+    assert _pixel_close(minimal_corner, accent, tolerance=20)

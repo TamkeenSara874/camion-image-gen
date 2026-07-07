@@ -39,6 +39,9 @@ def _build_user_message(template: str, ctx: CampaignContext, retry_suffix: str) 
     custom_prompt_block = (
         f"Additional creative direction: {ctx.custom_prompt}" if ctx.custom_prompt else ""
     )
+    occasion_mood_block = (
+        f"Occasion/time-of-day cue: {ctx.occasion_mood}" if ctx.occasion_mood else ""
+    )
     audience_str = ", ".join(ctx.audience) if ctx.audience else "General"
     guest_tags_str = ", ".join(ctx.guest_context_tags) if ctx.guest_context_tags else "None"
     item_category = ctx.extra_vars.get("item_category", [])
@@ -68,6 +71,7 @@ def _build_user_message(template: str, ctx: CampaignContext, retry_suffix: str) 
         accent_hex=ctx.restaurant.brand_colors.get("accent", "#888888"),
         guest_context_tags=guest_tags_str,
         custom_prompt_block=custom_prompt_block,
+        occasion_mood_block=occasion_mood_block,
         item_category=item_category_str,
         deal_type=deal_type,
         platforms=platforms_str,

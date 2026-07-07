@@ -105,4 +105,5 @@ def map_brand(restaurant_id: int) -> RestaurantBrand:
         brand_colors=data["brand_colors"],
         currency_symbol=data.get("currency_symbol", "$"),
         logo_path=_resolve_logo_path(data.get("logo_path"), restaurant_id),
+        style_profile=data.get("style_profile", "festive_organic"),
     )

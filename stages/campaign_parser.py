@@ -75,6 +75,50 @@ _AUDIENCE_TONES: dict[str, str] = {
 }
 _DEFAULT_AUDIENCE_TONE = "Friendly and inclusive, suitable for a general audience."
 
+# Time-of-day / occasion cues buried in free-text campaign names and
+# descriptions (e.g. "Salsa Sampler Night...every Thursday night") were being
+# silently dropped -- the prompt generator passed that text through and hoped
+# the image model would infer the mood on its own. Scanned and turned into an
+# explicit lighting/atmosphere directive instead, the same way campaign_goal
+# and audience are turned into explicit directives above. Order matters: more
+# specific multi-word phrases are checked first so e.g. "late night" doesn't
+# get matched by the generic "night" pattern below it.
+_OCCASION_MOOD_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        r"\bhappy\s*hour\b",
+        "Happy-hour atmosphere: warm early-evening golden light and social bar energy.",
+    ),
+    (
+        r"\blate[\s-]*night\b",
+        "Late-night atmosphere: dim, moody lighting and an intimate after-hours energy.",
+    ),
+    (
+        r"\bbrunch\b",
+        "Brunch atmosphere: soft late-morning daylight, relaxed and unhurried mood.",
+    ),
+    (
+        r"\bbreakfast\b|\bmorning\b",
+        "Morning atmosphere: soft, fresh early daylight.",
+    ),
+    (
+        r"\bnight\b|\bevening\b",
+        "Evening/nighttime atmosphere: warm string-light or candlelight glow, "
+        "social nighttime gathering mood.",
+    ),
+    (
+        r"\bweekend\b",
+        "Relaxed weekend atmosphere: leisurely, unhurried daytime mood.",
+    ),
+    (
+        r"\bdinner\b",
+        "Dinner atmosphere: warm evening ambiance with candlelight or low warm lighting.",
+    ),
+    (
+        r"\blunch\b",
+        "Lunch atmosphere: bright, casual midday energy.",
+    ),
+)
+
 
 def _goal_direction(campaign_goal: str) -> str:
     return _GOAL_DIRECTIVES.get(campaign_goal, _DEFAULT_GOAL_DIRECTIVE)
@@ -85,6 +129,17 @@ def _audience_tone(audiences: list[str]) -> str:
         if key in audiences:
             return _AUDIENCE_TONES[key]
     return _DEFAULT_AUDIENCE_TONE
+
+
+def _occasion_mood(text: str) -> str:
+    """Returns an explicit lighting/atmosphere directive if the campaign name
+    or description names a specific occasion or time of day, otherwise "" so
+    the prompt falls back to the campaign type's default styling untouched."""
+    lowered = text.lower()
+    for pattern, directive in _OCCASION_MOOD_PATTERNS:
+        if re.search(pattern, lowered):
+            return directive
+    return ""
 
 
 def sanitize_user_text(text: str) -> str:
@@ -107,6 +162,7 @@ def parse(payload: CampaignPayload, brand: RestaurantBrand) -> CampaignContext:
     schema_cls = CAMPAIGN_REGISTRY[payload.campaign_type]
     vars_obj = schema_cls.model_validate(payload.campaign_vars)
     main_offer, price, extra_vars = _extract_fields(vars_obj, brand)
+    main_title = sanitize_user_text(vars_obj.name)  # type: ignore[attr-defined]
 
     channel = (payload.channels or ["Email"])[0]
     custom_prompt = sanitize_user_text(payload.custom_prompt) if payload.custom_prompt else None
@@ -117,7 +173,8 @@ def parse(payload: CampaignPayload, brand: RestaurantBrand) -> CampaignContext:
         campaign_goal=sanitize_user_text(payload.campaign_goals),
         goal_direction=_goal_direction(payload.campaign_goals),
         audience_tone=_audience_tone(payload.campaign_audiences),
-        main_title=sanitize_user_text(vars_obj.name),  # type: ignore[attr-defined]
+        occasion_mood=_occasion_mood(f"{main_title} {main_offer}"),
+        main_title=main_title,
         main_offer=main_offer,
         price=price,
         cta=payload.cta,

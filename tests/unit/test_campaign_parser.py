@@ -323,3 +323,48 @@ def test_unknown_audience_falls_back_to_default_tone(mijos):
     )
     ctx = parse(payload, mijos)
     assert ctx.audience_tone  # non-empty, doesn't crash on an unrecognized audience
+
+
+def test_occasion_keyword_in_campaign_name_is_detected(mijos):
+    payload = _payload(
+        "Spotlights",
+        {"name": "Salsa Sampler Night", "description": "Come dance with us every Thursday."},
+    )
+    ctx = parse(payload, mijos)
+    assert "night" in ctx.occasion_mood.lower() or "evening" in ctx.occasion_mood.lower()
+
+
+def test_occasion_keyword_in_description_is_detected(mijos):
+    payload = _payload(
+        "Spotlights",
+        {"name": "Salsa Sampler", "description": "Join us every Thursday night for live music."},
+    )
+    ctx = parse(payload, mijos)
+    assert ctx.occasion_mood  # detected from description text, not just the title
+
+
+def test_occasion_with_no_matching_keyword_is_empty(mijos):
+    payload = _payload(
+        "Spotlights",
+        {"name": "Chef's Special", "description": "A new seasonal dish."},
+    )
+    ctx = parse(payload, mijos)
+    assert ctx.occasion_mood == ""
+
+
+def test_late_night_takes_priority_over_generic_night(mijos):
+    payload = _payload(
+        "Spotlights",
+        {"name": "Late Night Bites", "description": "Food until 2am."},
+    )
+    ctx = parse(payload, mijos)
+    assert "after-hours" in ctx.occasion_mood.lower()
+
+
+def test_happy_hour_detected(mijos):
+    payload = _payload(
+        "Deals",
+        {"name": "Happy Hour Special", "deal_type": "%OFF", "deal_type_vars": {"discount": 20}},
+    )
+    ctx = parse(payload, mijos)
+    assert "happy-hour" in ctx.occasion_mood.lower()

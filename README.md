@@ -136,9 +136,40 @@ docker-compose up --build
 
 Backend: http://localhost:8010
 Frontend: http://localhost:8501
+Prometheus: http://localhost:9091 (host 9090 is intentionally avoided -- see the port
+comment in `docker-compose.yml` if it collides with something else on your machine too)
+Grafana: http://localhost:3000 (login `admin` / `admin`, or whatever
+`GF_SECURITY_ADMIN_PASSWORD` is set to) -- the "Camion Image Generator — Overview"
+dashboard and its Prometheus datasource are both auto-provisioned, no manual setup needed.
 
-Note: the backend Docker image is large (~3 GB) because PyTorch is required for CLIP.
-CLIP weights are downloaded at container startup (not baked into the image).
+Note: the backend Docker image is ~2.3 GB because PyTorch is required for CLIP.
+`requirements.txt` points pip at PyTorch's CPU-only wheel index first (this service never
+uses a GPU) -- installing the default CUDA-bundled wheel instead would add several more GB
+of unused `nvidia-*` packages. CLIP weights themselves are downloaded at container startup,
+not baked into the image.
+
+---
+
+## Observability
+
+The backend exposes Prometheus metrics at `/metrics` (`prometheus-client`, see
+`utils/metrics.py`) covering the full pipeline, not just request counts:
+
+| Metric | Type | What it tracks |
+|---|---|---|
+| `image_generation_requests_total` | Counter | Request volume, labeled by QA pass/fail |
+| `image_generation_latency_seconds` | Histogram | End-to-end request latency |
+| `stage_latency_seconds` | Histogram | Per-stage latency, labeled by stage name |
+| `image_generation_cost_usd` | Histogram | Estimated cost per request |
+| `clip_score` | Histogram | CLIP image-text alignment score |
+| `qa_retry_total` | Counter | QA-triggered regeneration retries, labeled by reason |
+| `synthesis_fallback_total` | Counter | Image-model fallback events, labeled by from/to model |
+
+`docker-compose.yml` includes `prometheus` and `grafana` services pointed at that endpoint
+(`infra/prometheus/prometheus.yml`, `infra/grafana/provisioning/`). Grafana's datasource
+and its "Camion Image Generator — Overview" dashboard (10 panels: request rate, QA pass
+rate, p50/p95 latency, per-stage latency, cost, CLIP score, retries, fallback rate) are
+both auto-provisioned on first start -- no manual dashboard setup. See the URLs above.
 
 ---
 
@@ -273,7 +304,8 @@ Adding a new restaurant: add a JSON object to `config/restaurant_brands.json` wi
 least `website_url` set. The logo is fetched automatically the first time that restaurant
 is requested (see "Automatic logo fetching" below) — running `scripts/fetch_brand_logo.py`
 by hand is optional, only useful for pre-warming the cache. `scripts/extract_brand_colors.py`
-for the color palette is still a manual step. No code changes either way.
+for the color palette is still a manual step, as is picking `style_profile` (see "Style
+profiles" below; defaults to `festive_organic` if omitted). No code changes either way.
 See `docs/brand_notes.md` for the full walkthrough.
 
 ---
@@ -296,14 +328,38 @@ of all looking like clones of each other:
 An unrecognized `campaign_type` falls back to the Menu Items variant pool rather than
 crashing (`_VARIANTS_BY_TYPE.get(ctx.campaign_type, _VARIANTS_BY_TYPE["Menu Items"])`).
 
+**Style profiles: personality beyond two hex codes.** The 3 structural variants above are
+shared across every restaurant, but two brands with very different personalities (a festive
+taqueria vs. a refined wine bar) shouldn't look like the same layout re-skinned with
+different colors. `RestaurantBrand.style_profile` (`config/restaurant_brands.json`) is an
+explicit, per-restaurant choice — the same kind of one-line manual call already made when
+picking accent colors, not something guessed from `brand_theme` text — that selects a
+`_StylePreset` in `stages/text_compositor.py`:
+
+| Style profile | Display font | Corner roundness | Logo backing | Hairline edges |
+|---|---|---|---|---|
+| `festive_organic` (Mijo's) | Righteous (rounded, bold) | High — near-stadium shapes | Solid white card | None |
+| `refined_minimal` (Flights) | Marcellus (thin, elegant serif) | Low — crisp near-square corners | Brand-tinted translucent wash | Thin accent-color edge on badges, pills, and panel seams |
+
+Unknown or missing `style_profile` values fall back to `festive_organic`.
+
 **Real logos, never generated.** The image model is explicitly told to draw no logos,
 text, or signage in every prompt template — a diffusion model has no pixel-exact memory
 of a specific restaurant's mark and would otherwise hallucinate a plausible-looking fake
 that changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`)
-is pasted onto the image deterministically by the Pillow compositor instead, on a white
-card so it stays legible against any brand color. If a restaurant has no logo cached yet
-and the auto-fetch below hasn't resolved one, the compositor degrades to a typed
-restaurant-name badge rather than inventing one.
+is pasted onto the image deterministically by the Pillow compositor instead, with a soft
+drop shadow so it reads as seated in the scene rather than a flat sticker, on a backing
+card whose treatment (solid vs. translucent) comes from the style profile above. If a
+restaurant has no logo cached yet and the auto-fetch below hasn't resolved one, the
+compositor degrades to a typed restaurant-name badge rather than inventing one.
+
+**Occasion/mood-aware prompting.** `stages/campaign_parser.py` scans the campaign name and
+description for time-of-day and occasion cues ("night," "brunch," "happy hour," "weekend,"
+...) the same way it already turns `campaign_goal` and `campaign_audiences` into explicit
+directives, rather than trusting the image model to infer mood from raw text. "Salsa
+Sampler Night ... every Thursday night" turns into an explicit lighting directive (warm
+evening/string-light atmosphere) injected into the prompt instead of silently rendering as
+a bright daytime scene.
 
 **Automatic logo fetching, run in parallel.** `stages/brand_mapper.py::ensure_logo()`
 checks whether `config/logos/{restaurantId}.png` already exists; if not, it scrapes the

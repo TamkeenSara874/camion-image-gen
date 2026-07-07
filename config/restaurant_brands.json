@@ -4,6 +4,7 @@
     "cuisine_type": "Mexican",
     "brand_theme": "vibrant, festive, warm and inviting taqueria atmosphere",
     "visual_style": "rustic wood textures, terracotta tones, colorful folk art",
+    "style_profile": "festive_organic",
     "website_url": "https://www.mijostaqueria.com",
     "logo_path": "config/logos/2.png",
     "brand_colors": {
@@ -18,6 +19,7 @@
     "cuisine_type": "American Eclectic",
     "brand_theme": "sophisticated, contemporary, wine-forward dining experience",
     "visual_style": "clean lines, deep jewel tones, elegant minimalist presentation",
+    "style_profile": "refined_minimal",
     "website_url": "https://www.flightsrestaurant.com",
     "logo_path": "config/logos/4.png",
     "brand_colors": {

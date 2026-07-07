@@ -1,0 +1,23 @@
+{
+  "campaign_type": "Deals",
+  "campaign_goals": "Increase Guest Visits",
+  "campaign_audiences": ["Regulars", "New"],
+  "campaign_guest_tags": [],
+  "campaign_vars": {
+    "name": "Salsa Sampler Night",
+    "description": "Live salsa dancing, sampler platters, and half-price margaritas every Thursday night.",
+    "deal_type": "PERCENT_OFF",
+    "deal_type_vars": {
+      "percent": 25
+    },
+    "start_date": "2026-07-09",
+    "end_date": "2026-08-27",
+    "promo_code": null
+  },
+  "cta": true,
+  "channels": ["Email"],
+  "campaign_brand_voices": "Festive, Energetic, Inviting",
+  "restaurantId": 2,
+  "orientation": "Landscape",
+  "custom_prompt": null
+}
