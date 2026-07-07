@@ -41,6 +41,8 @@ from utils.metrics import (
     IMAGE_GENERATION_LATENCY,
     IMAGE_GENERATION_REQUESTS_TOTAL,
     QA_RETRY_TOTAL,
+    STAGE_LATENCY,
+    SYNTHESIS_FALLBACK_TOTAL,
 )
 
 logger = structlog.get_logger()
@@ -307,6 +309,12 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
         QA_RETRY_TOTAL.labels(reason=last_failure_category.value).inc(qa_retries)
     if clip_score is not None:
         CLIP_SCORE_HISTOGRAM.observe(clip_score)
+    for s in metrics.stages:
+        STAGE_LATENCY.labels(stage=s.stage).observe(s.latency_ms / 1000)
+    if synthesis.attempt_number > 1:
+        SYNTHESIS_FALLBACK_TOTAL.labels(
+            from_model=settings.openai_image_model, to_model=synthesis.model_used
+        ).inc()
 
     log.info(
         "request_complete",

@@ -1,3 +1,10 @@
+# CPU-only PyTorch wheel index first: this service only runs CLIP scoring on
+# CPU (see stages/qa_validator.py), so the default CUDA-bundled torch wheel
+# from PyPI would pull several GB of unused nvidia-* packages (cublas, cudnn,
+# nccl, ...). PyPI stays available as a fallback for every other dependency.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
 fastapi==0.115.7
 uvicorn[standard]==0.34.0
 pydantic==2.10.6

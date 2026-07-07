@@ -24,3 +24,39 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Host 9091 -> container 9090: host 9090 collides with an unrelated
+      # arm-chatbot-prometheus-1 container already running on this machine.
+      - "9091:9090"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      # Dashboard JSON lives at infra/grafana/provisioning/dashboards/json/ --
+      # inside the same tree as this single mount, not a second bind-mount
+      # nested inside it. Docker/runc can't create a mountpoint for a nested
+      # bind-mount inside a :ro parent mount ("read-only file system" at
+      # container init), so the dashboard path has to already exist here.
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # Default login is admin/admin on first run -- change it, or set this instead.
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
