@@ -64,9 +64,12 @@ TAG_OPTIONS = [
 
 PLATFORM_OPTIONS = ["website", "kiosk", "qr", "pos"]
 
-# The two deal_type values that actually appear in the task brief's sample
-# payloads, with the deal_type_vars shape each one really uses.
-DEAL_TYPES = ["Free gift with purchase", "Buy this, get that"]
+# The deal_type values the form supports, with the deal_type_vars shape each
+# one really uses. "Free gift with purchase" and "Buy this, get that" match
+# the task brief's sample payloads exactly; "% off" was added later and isn't
+# schema-constrained on the backend (DealsVars.deal_type is a free string),
+# so its shape here is just a reasonable, self-consistent choice.
+DEAL_TYPES = ["Free gift with purchase", "Buy this, get that", "% off"]
 
 _CSS = """
 <style>
@@ -176,29 +179,47 @@ def _deal_type_vars(deal_type: str) -> dict:
             "gift_items_count": int(gift_items_count),
         }
 
-    # "Buy this, get that"
+    if deal_type == "Buy this, get that":
+        col1, col2 = st.columns(2)
+        with col1:
+            purchase_items = st.text_input(
+                "Purchase item(s) (comma-separated)", placeholder="Around the World Flight"
+            )
+            purchase_item_count = st.number_input("Qty to purchase", min_value=1, value=1, step=1)
+            get_type = st.selectbox("Reward type", ["Category", "Item"])
+        with col2:
+            get_items = st.text_input(
+                "Reward item(s)/category (comma-separated)", placeholder="Signature Drink Flights"
+            )
+            get_items_count = st.number_input("Reward quantity", min_value=1, value=1, step=1)
+            save_amount = st.text_input("Save amount", placeholder="24")
+        return {
+            "purchase_type": "Item",
+            "purchase_items": [i.strip() for i in purchase_items.split(",") if i.strip()],
+            "purchase_item_count": int(purchase_item_count),
+            "get_type": get_type,
+            "get_items": [i.strip() for i in get_items.split(",") if i.strip()],
+            "get_items_count": int(get_items_count),
+            "save_amount": save_amount or None,
+            "save_amount_item": "1",
+        }
+
+    # "% off"
     col1, col2 = st.columns(2)
     with col1:
-        purchase_items = st.text_input(
-            "Purchase item(s) (comma-separated)", placeholder="Around the World Flight"
-        )
-        purchase_item_count = st.number_input("Qty to purchase", min_value=1, value=1, step=1)
-        get_type = st.selectbox("Reward type", ["Category", "Item"])
+        percent = st.number_input("Percent off", min_value=1, max_value=100, value=20, step=5)
+        applies_to_type = st.selectbox("Applies to", ["Entire order", "Category", "Item"])
     with col2:
-        get_items = st.text_input(
-            "Reward item(s)/category (comma-separated)", placeholder="Signature Drink Flights"
+        applies_to = st.text_input(
+            "Item(s)/category (comma-separated, leave blank for entire order)",
+            placeholder="Margaritas",
         )
-        get_items_count = st.number_input("Reward quantity", min_value=1, value=1, step=1)
-        save_amount = st.text_input("Save amount", placeholder="24")
+        min_spend = st.text_input("Minimum spend (optional)", placeholder="20")
     return {
-        "purchase_type": "Item",
-        "purchase_items": [i.strip() for i in purchase_items.split(",") if i.strip()],
-        "purchase_item_count": int(purchase_item_count),
-        "get_type": get_type,
-        "get_items": [i.strip() for i in get_items.split(",") if i.strip()],
-        "get_items_count": int(get_items_count),
-        "save_amount": save_amount or None,
-        "save_amount_item": "1",
+        "percent": int(percent),
+        "applies_to_type": applies_to_type,
+        "applies_to": [i.strip() for i in applies_to.split(",") if i.strip()],
+        "min_spend": min_spend or None,
     }
 
 
@@ -448,7 +469,7 @@ def main() -> None:
     payload = _generation_form(ct)
 
     if payload is not None:
-        with st.spinner("Generating image... this takes up to 30 seconds."):
+        with st.spinner("Generating image... this takes up to 60 seconds."):
             result = _call_api(payload)
         if result:
             st.session_state.result = result
