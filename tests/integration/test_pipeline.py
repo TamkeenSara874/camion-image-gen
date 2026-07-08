@@ -450,3 +450,55 @@ class TestMetrics:
 
         assert response.qa_scores["brand_fidelity"] == 4
         assert response.qa_scores["composition"] == 5
+
+
+class TestProgressReporting:
+    async def test_on_progress_reaches_100_on_success(self, menu_payload, settings):
+        calls: list[tuple[int, str]] = []
+        with _mocked_pipeline():
+            await run(menu_payload, settings, on_progress=lambda pct, stage: calls.append((pct, stage)))
+
+        assert calls, "on_progress was never called"
+        assert calls[-1][0] == 100
+
+    async def test_on_progress_is_monotonically_non_decreasing(self, menu_payload, settings):
+        calls: list[tuple[int, str]] = []
+        with _mocked_pipeline():
+            await run(menu_payload, settings, on_progress=lambda pct, stage: calls.append((pct, stage)))
+
+        percentages = [pct for pct, _ in calls]
+        assert percentages == sorted(percentages), f"progress went backwards: {percentages}"
+
+    async def test_on_progress_reports_intermediate_stages(self, menu_payload, settings):
+        calls: list[tuple[int, str]] = []
+        with _mocked_pipeline():
+            await run(menu_payload, settings, on_progress=lambda pct, stage: calls.append((pct, stage)))
+
+        # Somewhere between 0 and 100, real stage labels should have appeared --
+        # not just an immediate jump straight to "Done".
+        assert len(calls) > 1
+        assert any(0 < pct < 100 for pct, _ in calls)
+
+    async def test_on_progress_none_does_not_raise(self, menu_payload, settings):
+        with _mocked_pipeline():
+            response = await run(menu_payload, settings, on_progress=None)
+        assert response is not None
+
+    async def test_broken_progress_callback_does_not_crash_pipeline(self, menu_payload, settings):
+        def bad_callback(pct: int, stage: str) -> None:
+            raise RuntimeError("frontend disconnected or whatever")
+
+        with _mocked_pipeline():
+            response = await run(menu_payload, settings, on_progress=bad_callback)
+
+        assert response is not None
+        assert response.image_url == FAKE_URL
+
+    async def test_cache_hit_reports_100_immediately(self, menu_payload, settings):
+        with _mocked_pipeline():
+            await run(menu_payload, settings)  # populate cache
+
+            calls: list[tuple[int, str]] = []
+            await run(menu_payload, settings, on_progress=lambda pct, stage: calls.append((pct, stage)))
+
+        assert calls == [(100, "Done (cached)")]

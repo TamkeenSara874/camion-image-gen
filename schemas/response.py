@@ -30,3 +30,12 @@ class ImageGenerationResponse(BaseModel):
     clip_score: float | None
     qa_scores: dict[str, int | None]
     metrics: ResponseMetrics
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    stage: str
+    result: ImageGenerationResponse | None = None
+    error: str | None = None

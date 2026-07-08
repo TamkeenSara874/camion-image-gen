@@ -9,20 +9,23 @@ seven-stage AI pipeline. Built as a FastAPI service with a Streamlit frontend.
 
 ```mermaid
 flowchart TD
-    UI["Streamlit Frontend<br/>(frontend/app.py)"] -->|"POST /api/generate-image<br/>Bearer token"| API["FastAPI Backend<br/>(main.py)"]
+    UI["Streamlit Frontend<br/>(frontend/app.py)<br/>polls for progress + result"] -->|"POST /api/generate-image<br/>Bearer token"| API["FastAPI Backend<br/>(main.py)"]
     CURL["curl / any HTTP client"] --> API
 
-    API --> S1
+    API -->|"202 Accepted<br/>job_id, returns immediately"| JOB[("Job Store<br/>services/job_store.py<br/>in-memory, per worker")]
+    API -.schedules background task.-> RUNNER["_run_job()<br/>api/routes/image.py"]
+    UI -->|"GET /api/generate-image/&#123;job_id&#125;<br/>polled every 1s"| JOB
+    RUNNER --> S1
 
-    subgraph PIPE["pipeline/image_pipeline.py"]
+    subgraph PIPE["pipeline/image_pipeline.py — run()"]
         direction TB
         S1["Stage 1 &middot; Validator<br/>registry-based schema check per campaign_type"]
-        S2["Stage 2 &middot; Brand Mapper<br/>restaurantId -> RestaurantBrand<br/>(colors, theme, real logo path)"]
+        S2["Stage 2 &middot; Brand Mapper<br/>restaurantId -> RestaurantBrand<br/>(colors, style_profile, real logo path)"]
         LOGO["Logo Auto-Fetch (background task)<br/>ensure_logo(): scrapes once + caches to<br/>config/logos/, only if not already cached"]
-        S3["Stage 3 &middot; Campaign Parser<br/>sanitize input, allergen filter,<br/>goal/audience -> visual-direction mapping"]
+        S3["Stage 3 &middot; Campaign Parser<br/>sanitize input, allergen filter,<br/>goal/audience/occasion -> explicit visual directives"]
         S4["Stage 4 &middot; Prompt Generator<br/>gpt-4o-mini -> background scene prompt"]
-        S5["Stage 5 &middot; Image Synthesizer<br/>gpt-image-2 -> gpt-image-1.5 -> gpt-image-1-mini -> HF FLUX"]
-        S6["Stage 6 &middot; Text Compositor<br/>Pillow: real logo + 1-of-3 layout variants<br/>(picked deterministically per campaign type)"]
+        S5["Stage 5 &middot; Image Synthesizer<br/>gpt-image-2 -> gpt-image-1.5 -> gpt-image-1-mini -> HF FLUX<br/>(no streaming API -- progress is estimated here, see below)"]
+        S6["Stage 6 &middot; Text Compositor<br/>Pillow: real logo (silhouette shadow, no card) +<br/>style-profile personality, 1-of-3 layouts per campaign type"]
         S7["Stage 7 &middot; QA Validator<br/>CLIP + OCR + gpt-4.1-mini vision"]
         S1 --> S2
         S2 -.kicked off, awaited later.-> LOGO
@@ -37,8 +40,10 @@ flowchart TD
         RETRY -->|"compositor only"| S6
     end
 
-    S7 --> RESP["ImageGenerationResponse<br/>(image_url, metrics, qa_scores)<br/>returned to caller"]
-    R2U --> RESP
+    PIPE -.on_progress&#40;pct, stage&#41; after every stage<br/>+ an estimating ticker during Stage 5.-> JOB
+    S7 --> RESULT["ImageGenerationResponse<br/>(image_url, metrics, qa_scores)<br/>written into the job record"]
+    R2U --> RESULT
+    RESULT --> JOB
 
     OPENAI[("OpenAI API")] -.-> S4
     OPENAI -.-> S5
@@ -46,12 +51,24 @@ flowchart TD
     HF[("HuggingFace<br/>FLUX.1-schnell")] -.-> S5
     R2[("Cloudflare R2")] -.-> R2U
     SITE[("Restaurant's own website")] -.-> LOGO
+
+    PROM[("Prometheus<br/>scrapes /metrics every 15s")] -.-> API
+    PROM --> GRAF["Grafana dashboard<br/>(auto-provisioned)"]
 ```
 
 Parallelism baked in: the logo fetch (when needed at all) runs concurrently with Stage 3+4+5,
 Stage 6 and CLIP+OCR run simultaneously, and R2 upload and vision QA run simultaneously.
 Retry routing distinguishes synthesis failures (re-run Stage 4+5+6) from compositor-only
 failures (re-run Stage 6 only, no new image generation charge).
+
+**Async job pattern.** Image generation commonly takes 45-100s -- too long to hold an HTTP
+request open. `POST /api/generate-image` now returns immediately (202) with a `job_id`; the
+actual pipeline run happens in a background `asyncio` task, reporting progress into the same
+in-memory job store the frontend polls via `GET /api/generate-image/{job_id}`. The pipeline
+reports real percentages at real stage boundaries (5% validating, 25% writing the prompt, 90%
+running QA, 100% done); the one stage with no real progress signal at all -- the OpenAI image
+call itself, which isn't a streaming API -- gets a best-effort estimated ticker between those
+real milestones, never claiming completion before the actual result comes back.
 
 ---
 
@@ -219,6 +236,10 @@ external calls (OpenAI, R2).
 
 ### POST /api/generate-image
 
+Starts generation as a background job and returns immediately -- image synthesis alone
+commonly takes 45-100s, too long to hold a single HTTP request open on. Poll the job endpoint
+below for progress and the final result.
+
 **Header:** `Authorization: Bearer <API_BEARER_TOKEN>`
 
 **Request body:** see `sample_payloads/` for examples. Key fields:
@@ -239,36 +260,77 @@ external calls (OpenAI, R2).
 }
 ```
 
-**Response:**
+**Response (202 Accepted), immediately:**
 
 ```json
 {
-  "image_url": "https://pub-xxx.r2.dev/2/uuid.jpg",
-  "model_used": "gpt-image-2",
-  "attempt_number": 1,
-  "orientation_preserved": true,
-  "restaurant_name": "Mijo's Taqueria",
-  "alt_text": "Mijo's Taqueria - Baja Fish Taco",
-  "qa_passed": true,
-  "qa_retries": 0,
-  "clip_score": 0.27,
-  "qa_scores": { "brand_fidelity": 4, "composition": 5 },
-  "metrics": {
-    "total_latency_ms": 19430,
-    "total_cost_usd": 0.0438,
-    "stage_breakdown": [...]
-  }
+  "job_id": "6a1ea47535cf4b7c",
+  "status": "pending",
+  "progress": 0,
+  "stage": "Queued",
+  "result": null,
+  "error": null
 }
 ```
+
+**Error codes (on the POST itself):**
+
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid bearer token |
+| 403 | Missing bearer token |
+| 422 | Request body fails schema validation (Pydantic) |
+
+Everything that used to be a synchronous 422/429/500 (unknown campaign type, invalid
+restaurant ID, daily limit reached, all image models exhausted) now surfaces as
+`status: "failed"` on the job instead, since it isn't known until the background task actually
+runs `validate()`/`map_brand()`/etc. -- see the job endpoint below.
+
+### GET /api/generate-image/{job_id}
+
+Poll this (the frontend does so once a second) until `status` is `"complete"` or `"failed"`.
+
+```json
+{
+  "job_id": "6a1ea47535cf4b7c",
+  "status": "complete",
+  "progress": 100,
+  "stage": "Done",
+  "result": {
+    "image_url": "https://pub-xxx.r2.dev/2/uuid.jpg",
+    "model_used": "gpt-image-2",
+    "attempt_number": 1,
+    "orientation_preserved": true,
+    "restaurant_name": "Mijo's Taqueria",
+    "alt_text": "Mijo's Taqueria - Baja Fish Taco",
+    "qa_passed": true,
+    "qa_retries": 0,
+    "clip_score": 0.27,
+    "qa_scores": { "brand_fidelity": 4, "composition": 5 },
+    "metrics": {
+      "total_latency_ms": 65337,
+      "total_cost_usd": 0.0424,
+      "stage_breakdown": [...]
+    }
+  },
+  "error": null
+}
+```
+
+Mid-flight, `result` is `null` and `progress`/`stage` reflect real pipeline milestones (e.g.
+`{"progress": 46, "stage": "Generating image..."}`). On failure, `status` is `"failed"` and
+`error` holds the message (previously an HTTP 422/429/500 detail string).
 
 **Error codes:**
 
 | Status | Cause |
 |--------|-------|
 | 401 | Invalid bearer token |
-| 422 | Unknown campaign type, invalid restaurant ID, missing required field |
-| 429 | Daily image limit reached for this restaurant |
-| 500 | All image generation models failed |
+| 403 | Missing bearer token |
+| 404 | Unknown `job_id` (never existed, or pruned after 1 hour) |
+
+The job store is in-memory, one dict per worker process -- same limitation as the response
+cache below. It is not shared across replicas or preserved across a restart.
 
 ### GET /health
 
@@ -336,22 +398,29 @@ explicit, per-restaurant choice — the same kind of one-line manual call alread
 picking accent colors, not something guessed from `brand_theme` text — that selects a
 `_StylePreset` in `stages/text_compositor.py`:
 
-| Style profile | Display font | Corner roundness | Logo backing | Hairline edges |
-|---|---|---|---|---|
-| `festive_organic` (Mijo's) | Righteous (rounded, bold) | High — near-stadium shapes | Solid white card | None |
-| `refined_minimal` (Flights) | Marcellus (thin, elegant serif) | Low — crisp near-square corners | Brand-tinted translucent wash | Thin accent-color edge on badges, pills, and panel seams |
+| Style profile | Display font | CTA pill roundness | Hairline edges |
+|---|---|---|---|
+| `festive_organic` (Mijo's) | Righteous (rounded, bold) | High — near-stadium shape | None |
+| `refined_minimal` (Flights) | Marcellus (thin, elegant serif) | Low — crisp near-square corners | Thin accent-color edge on the CTA pill and on side-panel seams |
 
 Unknown or missing `style_profile` values fall back to `festive_organic`.
 
-**Real logos, never generated.** The image model is explicitly told to draw no logos,
-text, or signage in every prompt template — a diffusion model has no pixel-exact memory
-of a specific restaurant's mark and would otherwise hallucinate a plausible-looking fake
-that changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`)
-is pasted onto the image deterministically by the Pillow compositor instead, with a soft
-drop shadow so it reads as seated in the scene rather than a flat sticker, on a backing
-card whose treatment (solid vs. translucent) comes from the style profile above. If a
-restaurant has no logo cached yet and the auto-fetch below hasn't resolved one, the
-compositor degrades to a typed restaurant-name badge rather than inventing one.
+**Real logos, never generated, never boxed.** The image model is explicitly told to draw no
+logos, text, or signage in every prompt template — a diffusion model has no pixel-exact memory
+of a specific restaurant's mark and would otherwise hallucinate a plausible-looking fake that
+changes on every generation. The actual logo file (`config/logos/{restaurantId}.png`) is
+pasted onto the image deterministically by the Pillow compositor instead — directly, with no
+backing card or border of any kind, so it reads as a real logo rather than "a logo in a box."
+A soft shadow that follows the logo's own alpha silhouette (not a rectangle) seats it in the
+scene. If a restaurant has no logo cached yet and the auto-fetch below hasn't resolved one,
+the compositor degrades to shadowed plain text rather than inventing a mark.
+
+**Header bars and side panels are translucent washes, not opaque blocks.** Both fade from a
+brand-color tint near their outer edge to fully transparent at the seam where they meet the
+photo, instead of a flat color cutting into it with a hard edge — the header band is capped at
+~80% peak opacity and side panels at ~36% of the image width (narrower than earlier revisions),
+specifically so the photo stays visibly present underneath rather than looking blocked by UI
+chrome laid over it.
 
 **Occasion/mood-aware prompting.** `stages/campaign_parser.py` scans the campaign name and
 description for time-of-day and occasion cues ("night," "brunch," "happy hour," "weekend,"

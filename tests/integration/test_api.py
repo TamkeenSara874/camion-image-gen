@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from schemas.internal import CompositeResult, ImagePromptResponse, SynthesisResult
+import services.job_store as job_store_mod
 from schemas.response import ImageGenerationResponse, ResponseMetrics, StageBreakdown
 
 
@@ -51,6 +52,30 @@ _VALID_PAYLOAD = {
     "orientation": "Landscape",
     "custom_prompt": None,
 }
+
+_AUTH = {"Authorization": "Bearer test-bearer"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_job_store():
+    job_store_mod._jobs.clear()
+    yield
+    job_store_mod._jobs.clear()
+
+
+async def _await_job_terminal(client: AsyncClient, job_id: str, timeout: float = 2.0) -> dict:
+    """Polls the status endpoint until the background job reaches a terminal
+    state. Real requests take 45-100s; in tests `run` is mocked to resolve
+    near-instantly, so this only needs a few event-loop turns -- not real
+    wall-clock waiting."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        response = await client.get(f"/api/generate-image/{job_id}", headers=_AUTH)
+        body = response.json()
+        if body["status"] in ("complete", "failed"):
+            return body
+        await asyncio.sleep(0.01)
+    raise TimeoutError(f"job {job_id} never reached a terminal state: last body was {body}")
 
 
 @pytest.fixture()
@@ -126,8 +151,12 @@ class TestHealthEndpoints:
 
 
 class TestAuth:
-    async def test_no_auth_header_returns_403(self, client):
+    async def test_no_auth_header_on_post_returns_403(self, client):
         response = await client.post("/api/generate-image", json=_VALID_PAYLOAD)
+        assert response.status_code == 403
+
+    async def test_no_auth_header_on_get_returns_403(self, client):
+        response = await client.get("/api/generate-image/some-job-id")
         assert response.status_code == 403
 
     async def test_wrong_token_returns_401(self, client):
@@ -142,75 +171,129 @@ class TestAuth:
     async def test_correct_token_passes_auth(self, client):
         with patch("api.routes.image.run", AsyncMock(return_value=_fake_response())):
             response = await client.post(
-                "/api/generate-image",
-                json=_VALID_PAYLOAD,
-                headers={"Authorization": "Bearer test-bearer"},
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
             )
-        assert response.status_code == 200
+            assert response.status_code == 202
+            await _await_job_terminal(client, response.json()["job_id"])
 
 
 class TestGenerateImageEndpoint:
-    async def test_success_returns_image_url(self, client):
+    async def test_post_returns_202_with_pending_job(self, client):
         with patch("api.routes.image.run", AsyncMock(return_value=_fake_response())):
             response = await client.post(
-                "/api/generate-image",
-                json=_VALID_PAYLOAD,
-                headers={"Authorization": "Bearer test-bearer"},
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
             )
+            # The POST response itself must reflect the pre-task state (the
+            # background task is only scheduled, not yet run, at this point).
+            assert response.status_code == 202
+            body = response.json()
+            assert body["status"] == "pending"
+            assert body["progress"] == 0
+            assert body["result"] is None
+            assert "job_id" in body and body["job_id"]
+            # Drain the background task so it doesn't outlive this test.
+            await _await_job_terminal(client, body["job_id"])
 
-        assert response.status_code == 200
-        body = response.json()
-        assert "image_url" in body
-        assert "model_used" in body
-        assert "metrics" in body
+    async def test_job_completes_and_returns_result(self, client):
+        with patch("api.routes.image.run", AsyncMock(return_value=_fake_response())):
+            post_response = await client.post(
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
+            )
+            job_id = post_response.json()["job_id"]
+            body = await _await_job_terminal(client, job_id)
 
-    async def test_invalid_campaign_type_returns_422(self, client):
+        assert body["status"] == "complete"
+        assert body["progress"] == 100
+        assert body["result"]["image_url"] == "https://test.r2.dev/2/abc.jpg"
+        assert body["result"]["model_used"] == "gpt-image-2"
+
+    async def test_unknown_job_id_returns_404(self, client):
+        response = await client.get("/api/generate-image/does-not-exist", headers=_AUTH)
+        assert response.status_code == 404
+
+    async def test_invalid_campaign_type_surfaces_as_failed_job(self, client):
         bad_payload = {**_VALID_PAYLOAD, "campaign_type": "Flash Sale"}
-        with patch("api.routes.image.run", AsyncMock(side_effect=ValueError("Unknown campaign_type"))):
-            response = await client.post(
-                "/api/generate-image",
-                json=bad_payload,
-                headers={"Authorization": "Bearer test-bearer"},
+        with patch(
+            "api.routes.image.run", AsyncMock(side_effect=ValueError("Unknown campaign_type"))
+        ):
+            post_response = await client.post(
+                "/api/generate-image", json=bad_payload, headers=_AUTH
             )
+            job_id = post_response.json()["job_id"]
+            body = await _await_job_terminal(client, job_id)
 
-        assert response.status_code == 422
+        assert post_response.status_code == 202  # accepted immediately regardless
+        assert body["status"] == "failed"
+        assert "Unknown campaign_type" in body["error"]
 
-    async def test_daily_limit_returns_429(self, client):
+    async def test_daily_limit_surfaces_as_failed_job(self, client):
         with patch(
             "api.routes.image.run",
             AsyncMock(side_effect=RuntimeError("Daily image limit reached")),
         ):
-            response = await client.post(
-                "/api/generate-image",
-                json=_VALID_PAYLOAD,
-                headers={"Authorization": "Bearer test-bearer"},
+            post_response = await client.post(
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
             )
+            job_id = post_response.json()["job_id"]
+            body = await _await_job_terminal(client, job_id)
 
-        assert response.status_code == 429
+        assert body["status"] == "failed"
+        assert "Daily image limit" in body["error"]
 
-    async def test_pipeline_error_returns_500(self, client):
+    async def test_unexpected_pipeline_error_surfaces_as_failed_job(self, client):
         with patch(
-            "api.routes.image.run",
-            AsyncMock(side_effect=RuntimeError("all models exhausted")),
+            "api.routes.image.run", AsyncMock(side_effect=RuntimeError("all models exhausted"))
         ):
-            response = await client.post(
-                "/api/generate-image",
-                json=_VALID_PAYLOAD,
-                headers={"Authorization": "Bearer test-bearer"},
+            post_response = await client.post(
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
             )
+            job_id = post_response.json()["job_id"]
+            body = await _await_job_terminal(client, job_id)
 
-        assert response.status_code == 500
+        assert body["status"] == "failed"
+        assert "all models exhausted" in body["error"]
 
-    async def test_response_schema_valid(self, client):
+    async def test_result_schema_valid_once_complete(self, client):
         with patch("api.routes.image.run", AsyncMock(return_value=_fake_response())):
-            response = await client.post(
-                "/api/generate-image",
-                json=_VALID_PAYLOAD,
-                headers={"Authorization": "Bearer test-bearer"},
+            post_response = await client.post(
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
             )
+            job_id = post_response.json()["job_id"]
+            body = await _await_job_terminal(client, job_id)
 
-        body = response.json()
-        assert isinstance(body["qa_passed"], bool)
-        assert isinstance(body["qa_retries"], int)
-        assert isinstance(body["metrics"]["total_cost_usd"], float)
-        assert isinstance(body["metrics"]["stage_breakdown"], list)
+        result = body["result"]
+        assert isinstance(result["qa_passed"], bool)
+        assert isinstance(result["qa_retries"], int)
+        assert isinstance(result["metrics"]["total_cost_usd"], float)
+        assert isinstance(result["metrics"]["stage_breakdown"], list)
+
+    async def test_progress_updates_visible_while_running(self, client):
+        """The job's progress/stage should reflect what the pipeline reports
+        via on_progress, not just jump straight from 0 to 100."""
+        seen_progress: list[int] = []
+
+        async def slow_run(payload, settings, on_progress=None):
+            if on_progress:
+                on_progress(5, "Validating campaign")
+                on_progress(25, "Writing creative direction")
+                await asyncio.sleep(0.05)
+                on_progress(80, "Compositing image")
+            return _fake_response()
+
+        with patch("api.routes.image.run", slow_run):
+            post_response = await client.post(
+                "/api/generate-image", json=_VALID_PAYLOAD, headers=_AUTH
+            )
+            job_id = post_response.json()["job_id"]
+
+            # Poll a couple of times while it's still running.
+            for _ in range(20):
+                mid = await client.get(f"/api/generate-image/{job_id}", headers=_AUTH)
+                seen_progress.append(mid.json()["progress"])
+                if mid.json()["status"] == "complete":
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                await _await_job_terminal(client, job_id)  # ensure it's drained either way
+
+        assert any(0 < p < 100 for p in seen_progress), f"never saw partial progress: {seen_progress}"

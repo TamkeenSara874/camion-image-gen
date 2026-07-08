@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import hashlib
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from datetime import date
 from enum import Enum
 
@@ -119,13 +121,47 @@ async def _composite_and_check(
     return composite_result, clip_score, ocr_result
 
 
-async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationResponse:
+async def _synthesis_ticker(
+    report: Callable[[int, str], None], start_pct: int, end_pct: int, seconds: float
+) -> None:
+    """Estimates progress while the single long OpenAI image-generation call
+    is in flight. That API has no real progress signal (it's not a streaming
+    endpoint), so this is a best-effort interpolation over a typical-latency
+    estimate -- it can never actually reach end_pct itself; the caller
+    reports that real milestone only once synthesize() has genuinely
+    returned. Cancelled by the caller as soon as the real result is back, so
+    a faster-than-usual call just gets cut short rather than overshooting."""
+    steps = 30
+    interval = max(seconds / steps, 0.5)
+    for i in range(1, steps):
+        await asyncio.sleep(interval)
+        report(start_pct + int((end_pct - start_pct) * i / steps), "Generating image...")
+
+
+async def run(
+    payload: CampaignPayload,
+    settings: Settings,
+    on_progress: Callable[[int, str], None] | None = None,
+) -> ImageGenerationResponse:
     request_id = uuid.uuid4().hex[:12]
     log = logger.bind(request_id=request_id, restaurant_id=payload.restaurantId)
+
+    _last_reported = 0
+
+    def _report(pct: int, stage: str) -> None:
+        nonlocal _last_reported
+        if on_progress is None or (pct < _last_reported and pct != 100):
+            return
+        _last_reported = max(_last_reported, pct)
+        try:
+            on_progress(pct, stage)
+        except Exception:
+            log.warning("progress_callback_failed", exc_info=True)
 
     cache_key = _payload_hash(payload)
     if cache_key in _cache:
         log.info("cache_hit")
+        _report(100, "Done (cached)")
         return _cache[cache_key]
 
     today = date.today()
@@ -147,11 +183,13 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     t0 = time.perf_counter()
     validate_payload(payload)
     metrics.stages.append(StageMetrics("validator", None, int((time.perf_counter() - t0) * 1000)))
+    _report(5, "Validating campaign")
 
     # Stage 2
     t0 = time.perf_counter()
     brand = map_brand(payload.restaurantId)
     metrics.stages.append(StageMetrics("brand_mapper", None, int((time.perf_counter() - t0) * 1000)))
+    _report(10, "Loading restaurant brand")
 
     # Kick off logo resolution now, in the background. Only Stage 6 (compositor)
     # needs it, and Stage 4 (prompt) + Stage 5 (image synthesis) below take
@@ -166,6 +204,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     t0 = time.perf_counter()
     ctx = parse(payload, brand)
     metrics.stages.append(StageMetrics("campaign_parser", None, int((time.perf_counter() - t0) * 1000)))
+    _report(15, "Preparing creative brief")
 
     # Stage 4: initial prompt
     t0 = time.perf_counter()
@@ -177,6 +216,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
         int((time.perf_counter() - t0) * 1000), in_t, out_t,
         estimate_token_cost(settings.openai_concept_model, in_t, out_t),
     ))
+    _report(25, "Writing creative direction")
 
     # Stage 5-7 loop with retry
     synthesis = None
@@ -208,11 +248,22 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
                 int((time.perf_counter() - t0) * 1000), in_t, out_t,
                 estimate_token_cost(settings.openai_concept_model, in_t, out_t),
             ))
+            _report(30, "Refining based on quality feedback")
 
         if need_synthesis:
-            # Stage 5
+            # Stage 5. No streaming progress signal exists for this call, so
+            # a background ticker estimates progress while it's in flight --
+            # see _synthesis_ticker.
             t0 = time.perf_counter()
-            synthesis = await synthesize(prompt_response, ctx, settings)
+            ticker = asyncio.create_task(
+                _synthesis_ticker(_report, _last_reported, 78, seconds=60.0)
+            )
+            try:
+                synthesis = await synthesize(prompt_response, ctx, settings)
+            finally:
+                ticker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await ticker
             synth_cost = estimate_image_cost(synthesis.model_used, settings.openai_image_quality)
             metrics.stages.append(StageMetrics(
                 "image_synthesizer", synthesis.model_used,
@@ -223,6 +274,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
             metrics.synthesis_model = synthesis.model_used
             metrics.orientation_preserved = synthesis.orientation_preserved
             run_vision = True
+            _report(80, "Compositing image")
 
         # Stage 6 || CLIP+OCR in parallel
         t0 = time.perf_counter()
@@ -232,6 +284,7 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
         metrics.stages.append(StageMetrics(
             "text_compositor", None, int((time.perf_counter() - t0) * 1000)
         ))
+        _report(90, "Running quality checks")
 
         if run_vision:
             # Stage 7 Tier 2 || R2 upload in parallel
@@ -353,4 +406,5 @@ async def run(payload: CampaignPayload, settings: Settings) -> ImageGenerationRe
     )
 
     _cache[cache_key] = response
+    _report(100, "Done")
     return response

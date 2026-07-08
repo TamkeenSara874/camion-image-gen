@@ -223,15 +223,14 @@ def _deal_type_vars(deal_type: str) -> dict:
     }
 
 
-def _deals_vars(deal_type_key: str) -> dict:
+def _deals_vars(deal_type: str) -> dict:
     name = st.text_input("Deal name *", placeholder="Buy 1 Get 1 Free test")
     desc = st.text_area(
         "Description (optional)",
         placeholder="Buy 1 Baja Fish Taco and get one free!",
         height=68,
     )
-    deal_type = st.selectbox("Deal type *", DEAL_TYPES, key="deal_type_sel")
-    st.caption("Deal variables")
+    st.caption(f"Deal variables — {deal_type}")
     deal_vars = _deal_type_vars(deal_type)
 
     platforms = st.multiselect("Platforms", PLATFORM_OPTIONS, default=["website"])
@@ -256,6 +255,17 @@ def _deals_vars(deal_type_key: str) -> dict:
 
 
 def _generation_form(ct: str) -> dict | None:
+    # Deal type has to be picked *outside* the form: widgets inside
+    # st.form() don't trigger a script rerun until the form is submitted,
+    # so a selectbox in there can't dynamically swap the fields shown below
+    # it (the whole point of DEAL_TYPES) -- it would keep showing whichever
+    # deal type's fields were visible on the last actual rerun.
+    deal_type: str | None = None
+    if ct == "Deals":
+        st.divider()
+        deal_type = st.selectbox("Deal type *", DEAL_TYPES, key="deal_type_sel")
+        st.caption("Choose this first — it determines which fields appear in Campaign content below.")
+
     with st.form("gen_form", clear_on_submit=False):
         col_r, col_o = st.columns([3, 1])
         with col_r:
@@ -289,7 +299,7 @@ def _generation_form(ct: str) -> dict | None:
         elif ct == "Menu Items":
             campaign_vars = _menu_items_vars()
         else:
-            campaign_vars = _deals_vars(ct)
+            campaign_vars = _deals_vars(deal_type)
 
         with st.expander("Advanced options"):
             custom_prompt = st.text_area(
@@ -336,7 +346,10 @@ def _generation_form(ct: str) -> dict | None:
     }
 
 
-def _call_api(payload: dict) -> dict | None:
+def _start_job(payload: dict) -> str | None:
+    """POSTs the campaign, which now only starts a background job and
+    returns immediately (image generation itself commonly takes 45-100s,
+    well past what's reasonable to block a single HTTP request on)."""
     if not API_TOKEN:
         st.error(
             "API_BEARER_TOKEN is not set. Add it to your .env file and restart the app."
@@ -347,7 +360,7 @@ def _call_api(payload: dict) -> dict | None:
             f"{API_URL}/api/generate-image",
             json=payload,
             headers={"Authorization": f"Bearer {API_TOKEN}"},
-            timeout=180,
+            timeout=30,
         )
     except requests.exceptions.ConnectionError:
         st.error(
@@ -356,11 +369,11 @@ def _call_api(payload: dict) -> dict | None:
         )
         return None
     except requests.exceptions.Timeout:
-        st.error("Request timed out after 3 minutes.")
+        st.error("Starting the job timed out.")
         return None
 
-    if resp.status_code == 200:
-        return resp.json()
+    if resp.status_code == 202:
+        return resp.json()["job_id"]
 
     try:
         detail = resp.json().get("detail", resp.text)
@@ -368,6 +381,45 @@ def _call_api(payload: dict) -> dict | None:
         detail = resp.text
     st.error(f"Error {resp.status_code}: {detail}")
     return None
+
+
+def _poll_job(job_id: str) -> dict | None:
+    """Polls the job status endpoint once a second, driving a live progress
+    bar from the backend's real per-stage progress until the job reaches a
+    terminal state. Returns the final result dict on success, or None (with
+    the error already shown) on failure."""
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    progress_bar = st.progress(0, text="Queued")
+
+    while True:
+        try:
+            resp = requests.get(
+                f"{API_URL}/api/generate-image/{job_id}", headers=headers, timeout=10
+            )
+        except requests.exceptions.RequestException as exc:
+            progress_bar.empty()
+            st.error(f"Lost connection while checking progress: {exc}")
+            return None
+
+        if resp.status_code != 200:
+            progress_bar.empty()
+            st.error(f"Error {resp.status_code}: {resp.text}")
+            return None
+
+        body = resp.json()
+        pct = body["progress"]
+        progress_bar.progress(pct / 100, text=f"{body['stage']} ({pct}%)")
+
+        if body["status"] == "complete":
+            progress_bar.progress(1.0, text="Done (100%)")
+            progress_bar.empty()
+            return body["result"]
+        if body["status"] == "failed":
+            progress_bar.empty()
+            st.error(f"Generation failed: {body.get('error', 'Unknown error')}")
+            return None
+
+        time.sleep(1.0)
 
 
 def _result_panel(data: dict) -> None:
@@ -469,10 +521,11 @@ def main() -> None:
     payload = _generation_form(ct)
 
     if payload is not None:
-        with st.spinner("Generating image... this takes up to 60 seconds."):
-            result = _call_api(payload)
-        if result:
-            st.session_state.result = result
+        job_id = _start_job(payload)
+        if job_id:
+            result = _poll_job(job_id)
+            if result:
+                st.session_state.result = result
 
     if st.session_state.result:
         _result_panel(st.session_state.result)
